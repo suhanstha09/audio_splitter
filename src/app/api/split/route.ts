@@ -1,6 +1,6 @@
-import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "ffmpeg-static";
 import JSZip from "jszip";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -13,9 +13,12 @@ export const dynamic = "force-dynamic";
 const MIN_SEGMENT_SECONDS = 5;
 const MAX_SEGMENT_SECONDS = 60 * 30;
 
-if (ffmpegPath) {
-  ffmpeg.setFfmpegPath(ffmpegPath);
-}
+const ffmpegBinary =
+  typeof ffmpegPath === "string"
+    ? ffmpegPath
+    : typeof ffmpegPath === "object" && ffmpegPath !== null && "default" in ffmpegPath
+      ? ((ffmpegPath as { default?: unknown }).default as string | undefined) ?? "ffmpeg"
+      : "ffmpeg";
 
 function clampSegmentSeconds(value: number): number {
   if (!Number.isFinite(value)) {
@@ -27,19 +30,45 @@ function clampSegmentSeconds(value: number): number {
 
 function splitAudio(inputPath: string, outputPattern: string, segmentSeconds: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
-      .noVideo()
-      .audioCodec("libmp3lame")
-      .audioBitrate("192k")
-      .outputOptions([
-        "-f segment",
-        `-segment_time ${segmentSeconds}`,
-        "-reset_timestamps 1",
-      ])
-      .output(outputPattern)
-      .on("end", () => resolve())
-      .on("error", (error) => reject(error))
-      .run();
+    const args = [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      inputPath,
+      "-vn",
+      "-acodec",
+      "libmp3lame",
+      "-b:a",
+      "192k",
+      "-f",
+      "segment",
+      "-segment_time",
+      String(segmentSeconds),
+      "-reset_timestamps",
+      "1",
+      outputPattern,
+    ];
+
+    const ffmpegProcess = spawn(ffmpegBinary, args);
+    let stderr = "";
+
+    ffmpegProcess.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    ffmpegProcess.on("error", (error) => {
+      reject(error);
+    });
+
+    ffmpegProcess.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`ffmpeg failed with code ${code}: ${stderr || "No stderr output"}`));
+    });
   });
 }
 
@@ -134,7 +163,11 @@ export async function POST(request: Request) {
     );
   } finally {
     if (tempDirPath) {
-      await rm(tempDirPath, { recursive: true, force: true });
+      try {
+        await rm(tempDirPath, { recursive: true, force: true });
+      } catch {
+        // Avoid masking the real API result when cleanup fails.
+      }
     }
   }
 }
