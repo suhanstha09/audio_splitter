@@ -178,11 +178,16 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
+    const payload: { error: string; detail?: string } = {
+      error: "Audio split failed. Please confirm the uploaded file is valid audio.",
+    };
+
+    if (process.env.NODE_ENV !== "production") {
+      payload.detail = detail;
+    }
+
     return NextResponse.json(
-      {
-        error: "Audio split failed. Please confirm the uploaded file is valid audio.",
-        detail,
-      },
+      payload,
       { status: 500 },
     );
   } finally {
