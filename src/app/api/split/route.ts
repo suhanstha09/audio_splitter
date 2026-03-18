@@ -2,6 +2,7 @@ import ffmpegPath from "ffmpeg-static";
 import JSZip from "jszip";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -13,12 +14,35 @@ export const dynamic = "force-dynamic";
 const MIN_SEGMENT_SECONDS = 5;
 const MAX_SEGMENT_SECONDS = 60 * 30;
 
-const ffmpegBinary =
-  typeof ffmpegPath === "string"
-    ? ffmpegPath
-    : typeof ffmpegPath === "object" && ffmpegPath !== null && "default" in ffmpegPath
-      ? ((ffmpegPath as { default?: unknown }).default as string | undefined) ?? "ffmpeg"
-      : "ffmpeg";
+function resolveFfmpegBinary(): string {
+  const packagePath =
+    typeof ffmpegPath === "string"
+      ? ffmpegPath
+      : typeof ffmpegPath === "object" && ffmpegPath !== null && "default" in ffmpegPath
+        ? ((ffmpegPath as { default?: unknown }).default as string | undefined)
+        : undefined;
+
+  const candidates: string[] = [];
+
+  if (packagePath) {
+    candidates.push(packagePath);
+
+    if (packagePath.startsWith("/ROOT/")) {
+      const localPath = path.join(process.cwd(), packagePath.slice("/ROOT/".length));
+      candidates.push(localPath);
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return "ffmpeg";
+}
+
+const ffmpegBinary = resolveFfmpegBinary();
 
 function clampSegmentSeconds(value: number): number {
   if (!Number.isFinite(value)) {
