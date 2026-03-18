@@ -123,9 +123,13 @@ export async function POST(request: Request) {
         "Cache-Control": "no-store",
       },
     });
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown error";
     return NextResponse.json(
-      { error: "Audio split failed. Please confirm the uploaded file is valid audio." },
+      {
+        error: "Audio split failed. Please confirm the uploaded file is valid audio.",
+        detail,
+      },
       { status: 500 },
     );
   } finally {
