@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useState } from "react";
 
 type Status =
   | { type: "idle"; message: string }
@@ -8,20 +8,12 @@ type Status =
   | { type: "success"; message: string }
   | { type: "error"; message: string };
 
-const MIN_SEGMENT_SECONDS = 5;
-const MAX_SEGMENT_SECONDS = 60 * 30;
-
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
-  const [segmentSeconds, setSegmentSeconds] = useState(30);
   const [status, setStatus] = useState<Status>({
     type: "idle",
-    message: "Upload an audio file and split it into equal time chunks.",
+    message: "Upload audio to extract stems: bass, drums, guitar, vocals.",
   });
-
-  const canSubmit = useMemo(() => {
-    return file !== null && segmentSeconds >= MIN_SEGMENT_SECONDS && segmentSeconds <= MAX_SEGMENT_SECONDS;
-  }, [file, segmentSeconds]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -31,12 +23,14 @@ export default function Home() {
       return;
     }
 
-    setStatus({ type: "working", message: "Splitting audio. This can take a few moments." });
+    setStatus({
+      type: "working",
+      message: "Separating stems with Demucs. This can take up to a few minutes.",
+    });
 
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("segmentSeconds", String(segmentSeconds));
 
       const response = await fetch("/api/split", {
         method: "POST",
@@ -44,14 +38,16 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error ?? "Split request failed.");
+        const data = (await response.json().catch(() => null)) as
+          | { error?: string; detail?: string }
+          | null;
+        throw new Error(data?.detail ?? data?.error ?? "Stem separation request failed.");
       }
 
       const blob = await response.blob();
       const href = URL.createObjectURL(blob);
       const downloadAnchor = document.createElement("a");
-      const defaultName = `${file.name.replace(/\.[^/.]+$/, "") || "audio"}-chunks.zip`;
+      const defaultName = `${file.name.replace(/\.[^/.]+$/, "") || "audio"}-stems.zip`;
       const contentDisposition = response.headers.get("Content-Disposition");
       const serverFileName = contentDisposition?.match(/filename="?([^";]+)"?/)?.[1];
 
@@ -62,21 +58,24 @@ export default function Home() {
       document.body.removeChild(downloadAnchor);
       URL.revokeObjectURL(href);
 
-      setStatus({ type: "success", message: "Done. Your split audio zip has been downloaded." });
+      setStatus({
+        type: "success",
+        message: "Done. Downloaded zip includes bass, drums, guitar, and vocals stems.",
+      });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Split failed unexpectedly.";
+      const message = error instanceof Error ? error.message : "Stem separation failed unexpectedly.";
       setStatus({ type: "error", message });
     }
   }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-3xl flex-col justify-center gap-6 px-6 py-16">
-      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Audio Splitter</p>
+      <p className="text-sm font-medium text-zinc-500 dark:text-zinc-400">AI Stem Splitter</p>
       <h1 className="text-4xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100 sm:text-5xl">
-        Split Long Audio Into Chunks
+        Separate Bass, Drums, Guitar, Vocals
       </h1>
       <p className="max-w-2xl text-lg text-zinc-600 dark:text-zinc-300">
-        Upload a file, choose chunk duration, then download a zip containing MP3 segments.
+        Powered by Demucs (`htdemucs_6s`) running on your backend.
       </p>
 
       <form
@@ -93,24 +92,12 @@ export default function Home() {
           />
         </label>
 
-        <label className="flex flex-col gap-2 text-sm text-zinc-700 dark:text-zinc-200">
-          Segment length (seconds)
-          <input
-            type="number"
-            min={MIN_SEGMENT_SECONDS}
-            max={MAX_SEGMENT_SECONDS}
-            value={segmentSeconds}
-            onChange={(event) => setSegmentSeconds(Number(event.currentTarget.value))}
-            className="w-44 rounded-lg border border-zinc-300 bg-white px-3 py-2 text-zinc-900 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
-          />
-        </label>
-
         <button
           type="submit"
-          disabled={!canSubmit || status.type === "working"}
+          disabled={!file || status.type === "working"}
           className="mt-1 w-fit rounded-lg bg-zinc-900 px-4 py-2 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
         >
-          {status.type === "working" ? "Splitting..." : "Split And Download"}
+          {status.type === "working" ? "Separating..." : "Extract Stems"}
         </button>
 
         <p
