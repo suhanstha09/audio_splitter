@@ -1,6 +1,15 @@
-# Audio Splitter
+# Audio Stem Splitter
 
-Web app that splits an uploaded audio file into equal-length MP3 chunks and downloads them as a ZIP.
+Next.js app that separates one uploaded song into AI-generated stems and returns a ZIP download.
+
+## Stems generated
+
+- bass
+- drums
+- guitar
+- vocals
+
+Model used: `Demucs htdemucs_6s`.
 
 ## Stack
 
@@ -8,7 +17,8 @@ Web app that splits an uploaded audio file into equal-length MP3 chunks and down
 - React 19
 - TypeScript
 - Tailwind CSS
-- Node.js runtime route handlers
+- Node.js route handlers
+- Python Demucs (`demucs` package in `.venv`)
 
 ## Run locally
 
@@ -21,44 +31,29 @@ Open `http://localhost:3000`.
 
 ## How to use
 
-1. Open the app in your browser.
-2. Upload any audio file.
-3. Choose segment length in seconds.
-4. Click `Split And Download`.
-5. Downloaded zip contains `chunk-000.mp3`, `chunk-001.mp3`, and `manifest.json`.
+1. Upload audio in the web UI.
+2. Click `Extract Stems`.
+3. Wait for server-side AI separation.
+4. Download ZIP with `bass.mp3`, `drums.mp3`, `guitar.mp3`, `vocals.mp3`, and `manifest.json`.
 
-## API example
+## API
 
-Health check endpoint:
+Health check:
 
 ```bash
 curl http://localhost:3000/api/health
 ```
 
-Expected response:
-
-```json
-{
-	"status": "ok",
-	"runtime": "nodejs",
-	"timestamp": "2026-03-17T00:00:00.000Z"
-}
-```
-
-Split endpoint:
+Stem separation:
 
 ```bash
 curl -X POST http://localhost:3000/api/split \
-	-F "file=@/absolute/path/to/audio.mp3" \
-	-F "segmentSeconds=30" \
-	--output audio-chunks.zip
+  -F "file=@/absolute/path/to/song.mp3" \
+  --output song-stems.zip
 ```
 
-## Useful scripts
+## Notes
 
-```bash
-npm run dev
-npm run build
-npm run start
-npm run lint
-```
+- First run may be slower because Demucs model weights are downloaded.
+- For very long tracks on CPU, processing can take several minutes.
+- If needed, set custom Python path with env var `DEMUCS_PYTHON`.
