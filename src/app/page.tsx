@@ -330,27 +330,27 @@ export default function Home() {
       <section className="console-frame fade-in grid gap-5 rounded-3xl p-4 sm:p-6 lg:grid-cols-[1.2fr_0.8fr] lg:p-7">
         <div className="space-y-4">
           <header className="console-header rounded-2xl border px-4 py-4 sm:px-5">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--accent)">
               Audio Splitter DAW
             </p>
             <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">Stem Separation Console</h1>
-            <p className="mt-2 max-w-3xl text-sm text-[var(--ink-dim)] sm:text-base">
+            <p className="mt-2 max-w-3xl text-sm text-(--ink-dim) sm:text-base">
               Render bass, drums, guitar, and vocals into synchronized channels, then audition in a mixer-style layout.
             </p>
           </header>
 
           <form onSubmit={handleSubmit} className="daw-panel rounded-2xl border p-4 sm:p-5">
             <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="block rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-hi)] p-4">
+              <label className="block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-4">
                 <span className="mb-2 block text-sm font-semibold">Source Audio</span>
-                <span className="mb-3 block text-xs text-[var(--ink-dim)]">Any browser-readable audio format.</span>
+                <span className="mb-3 block text-xs text-(--ink-dim)">Any browser-readable audio format.</span>
                 <input
                   type="file"
                   accept="audio/*"
                   onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)}
                   className="daw-input block w-full rounded-lg px-3 py-2 text-sm"
                 />
-                <span className="mt-3 block text-xs font-mono text-[var(--ink-dim)]">
+                <span className="mt-3 block text-xs font-mono text-(--ink-dim)">
                   {file ? `selected: ${file.name}` : "selected: none"}
                 </span>
               </label>
@@ -358,14 +358,14 @@ export default function Home() {
               <button
                 type="submit"
                 disabled={!file || isWorking}
-                className="transport-button h-fit rounded-xl px-5 py-3 text-sm font-semibold uppercase tracking-[0.1em] disabled:cursor-not-allowed disabled:opacity-45"
+                className="transport-button h-fit rounded-xl px-5 py-3 text-sm font-semibold uppercase tracking-widest disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {isWorking ? "Rendering..." : "Render Stems"}
               </button>
             </div>
 
             <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between text-xs font-mono text-[var(--ink-dim)]">
+              <div className="flex items-center justify-between text-xs font-mono text-(--ink-dim)">
                 <span>Separation Progress</span>
                 <span>{progressLabel}</span>
               </div>
@@ -388,7 +388,7 @@ export default function Home() {
                   ? "border-red-400/55 bg-red-950/45 text-red-100"
                   : status.type === "success"
                     ? "border-emerald-400/45 bg-emerald-950/40 text-emerald-100"
-                    : "border-[var(--line)] bg-[var(--surface-hi)] text-[var(--ink)]"
+                    : "border-(--line) bg-(--surface-hi) text-(--ink)"
               }`}
             >
               {status.message}
@@ -398,7 +398,7 @@ export default function Home() {
           <section className="daw-panel rounded-2xl border p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Transport</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Transport</p>
                 <h2 className="text-xl font-semibold">Master Timeline</h2>
               </div>
 
@@ -432,7 +432,7 @@ export default function Home() {
             </div>
 
             <label className="block">
-              <span className="mb-2 flex items-center justify-between text-xs font-mono text-[var(--ink-dim)]">
+              <span className="mb-2 flex items-center justify-between text-xs font-mono text-(--ink-dim)">
                 <span>
                   {Math.floor(playbackPosition / 60)
                     .toString()
@@ -468,7 +468,7 @@ export default function Home() {
         <aside className="daw-panel rounded-2xl border p-4 sm:p-5">
           <div className="mb-4 flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Mixer</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Mixer</p>
               <h2 className="text-xl font-semibold">Channel Strips</h2>
             </div>
             {downloadZip && (
@@ -479,7 +479,7 @@ export default function Home() {
           </div>
 
           {stems.length === 0 ? (
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-hi)] p-4 text-sm text-[var(--ink-dim)]">
+            <div className="rounded-xl border border-(--line) bg-(--surface-hi) p-4 text-sm text-(--ink-dim)">
               Render stems to populate channel strips.
             </div>
           ) : (
@@ -488,8 +488,8 @@ export default function Home() {
                 const isMuted = mutedByStem[stem.name];
 
                 return (
-                  <li key={stem.name} className="channel-strip rounded-xl border border-[var(--line)] p-3">
-                    <p className="text-xs uppercase tracking-[0.12em] text-[var(--ink-dim)]">Channel</p>
+                  <li key={stem.name} className="channel-strip rounded-xl border border-(--line) p-3">
+                    <p className="text-xs uppercase tracking-[0.12em] text-(--ink-dim)">Channel</p>
                     <p className="mt-1 text-sm font-semibold capitalize">{stem.name}</p>
                     <div className="vu-stack mt-3" aria-hidden="true">
                       <span />
@@ -532,7 +532,7 @@ export default function Home() {
             </ul>
           )}
 
-          <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-hi)] p-3 text-xs text-[var(--ink-dim)]">
+          <div className="mt-4 rounded-xl border border-(--line) bg-(--surface-hi) p-3 text-xs text-(--ink-dim)">
             Endpoint: <span className="font-mono">POST /api/split</span> and progress polling via <span className="font-mono">GET /api/split?jobId=...</span>
           </div>
         </aside>
