@@ -34,7 +34,8 @@ Open `http://localhost:3000`.
 1. Upload audio in the web UI.
 2. Click `Extract Stems`.
 3. Wait for server-side AI separation.
-4. Download ZIP with `bass.mp3`, `drums.mp3`, `guitar.mp3`, `vocals.mp3`, and `manifest.json`.
+4. Use the in-app stem mixer to play all stems in sync, seek through the song, and mute/unmute each stem individually.
+5. Download ZIP with `bass.mp3`, `drums.mp3`, `guitar.mp3`, `vocals.mp3`, and `manifest.json`.
 
 ## API
 
