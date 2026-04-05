@@ -448,10 +448,10 @@ export default function Home() {
 
             <ul className="space-y-3 text-sm">
               {[
-                "Bass stem (wav)",
-                "Drums stem (wav)",
-                "Guitar stem (wav)",
-                "Vocals stem (wav)",
+                "Bass stem (mp3)",
+                "Drums stem (mp3)",
+                "Guitar stem (mp3)",
+                "Vocals stem (mp3)",
               ].map((item) => (
                 <li key={item} className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--panel-strong)] px-3 py-2.5">
                   <span className="h-2 w-2 rounded-full bg-[var(--brand)]" aria-hidden="true" />
