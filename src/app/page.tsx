@@ -4,6 +4,7 @@ import JSZip from "jszip";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 const STEM_ORDER = ["bass", "drums", "guitar", "vocals"] as const;
+const POLL_INTERVAL_MS = 1200;
 
 type StemName = (typeof STEM_ORDER)[number];
 
@@ -18,6 +19,29 @@ type Status =
   | { type: "success"; message: string }
   | { type: "error"; message: string };
 
+type SplitJobStatusResponse = {
+  jobId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  progress: number;
+  message: string;
+  error?: string;
+  fileName?: string;
+  downloadUrl?: string | null;
+};
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [stems, setStems] = useState<StemTrack[]>([]);
@@ -25,6 +49,7 @@ export default function Home() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const [playbackDuration, setPlaybackDuration] = useState(0);
+  const [separationProgress, setSeparationProgress] = useState(0);
   const [mutedByStem, setMutedByStem] = useState<Record<StemName, boolean>>({
     bass: false,
     drums: false,
@@ -34,7 +59,7 @@ export default function Home() {
   const audioRefs = useRef<Partial<Record<StemName, HTMLAudioElement | null>>>({});
   const [status, setStatus] = useState<Status>({
     type: "idle",
-    message: "Upload audio to extract stems: bass, drums, guitar, vocals.",
+    message: "Drop a track and render stems through the DAW rack below.",
   });
 
   const availableStemNames = useMemo(() => stems.map((stem) => stem.name), [stems]);
@@ -86,6 +111,7 @@ export default function Home() {
     setIsPlaying(false);
     setPlaybackPosition(0);
     setPlaybackDuration(0);
+    setSeparationProgress(0);
     setMutedByStem({
       bass: false,
       drums: false,
@@ -148,7 +174,7 @@ export default function Home() {
     if (!started) {
       setStatus({
         type: "error",
-        message: "Playback was blocked by the browser. Click the page and try Play All again.",
+        message: "Playback was blocked by the browser. Click the page and try Play again.",
       });
       setIsPlaying(false);
       return;
@@ -164,6 +190,37 @@ export default function Home() {
     }));
   }
 
+  async function waitForSplitCompletion(jobId: string): Promise<SplitJobStatusResponse> {
+    while (true) {
+      const response = await fetch(`/api/split?jobId=${encodeURIComponent(jobId)}`, {
+        cache: "no-store",
+      });
+
+      if (!response.ok) {
+        const data = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(data?.error ?? "Unable to poll split status.");
+      }
+
+      const job = (await response.json()) as SplitJobStatusResponse;
+      setSeparationProgress(clampPercent(job.progress));
+
+      if (job.status === "completed") {
+        return job;
+      }
+
+      if (job.status === "failed") {
+        throw new Error(job.error ?? job.message ?? "Stem separation failed.");
+      }
+
+      setStatus({
+        type: "working",
+        message: job.message || "Separating stems...",
+      });
+
+      await sleep(POLL_INTERVAL_MS);
+    }
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -172,29 +229,49 @@ export default function Home() {
       return;
     }
 
+    clearStemAssets();
+    setSeparationProgress(2);
     setStatus({
       type: "working",
-      message: "Separating stems with Demucs. This can take up to a few minutes.",
+      message: "Creating a split job and warming up Demucs.",
     });
-    clearStemAssets();
 
     try {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("/api/split", {
+      const startResponse = await fetch("/api/split", {
         method: "POST",
         body: formData,
       });
 
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as
+      if (!startResponse.ok) {
+        const data = (await startResponse.json().catch(() => null)) as
           | { error?: string; detail?: string }
           | null;
-        throw new Error(data?.detail ?? data?.error ?? "Stem separation request failed.");
+        throw new Error(data?.detail ?? data?.error ?? "Unable to start stem separation.");
       }
 
-      const zipBlob = await response.blob();
+      const started = (await startResponse.json()) as { jobId?: string; error?: string };
+
+      if (!started.jobId) {
+        throw new Error(started.error ?? "Split job id was not returned by the server.");
+      }
+
+      const result = await waitForSplitCompletion(started.jobId);
+
+      if (!result.downloadUrl) {
+        throw new Error("Split completed without a downloadable zip artifact.");
+      }
+
+      setStatus({ type: "working", message: "Downloading and preparing stems in the mixer." });
+      const zipResponse = await fetch(result.downloadUrl, { cache: "no-store" });
+
+      if (!zipResponse.ok) {
+        throw new Error("Split finished, but the zip could not be downloaded.");
+      }
+
+      const zipBlob = await zipResponse.blob();
       const zip = await JSZip.loadAsync(zipBlob);
       const extractedStems: StemTrack[] = [];
 
@@ -217,19 +294,27 @@ export default function Home() {
       }
 
       const defaultName = `${file.name.replace(/\.[^/.]+$/, "") || "audio"}-stems.zip`;
-      const contentDisposition = response.headers.get("Content-Disposition");
-      const serverFileName = contentDisposition?.match(/filename="?([^";]+)"?/)?.[1];
+      const serverFileName = result.fileName;
 
       setDownloadZip({
         url: URL.createObjectURL(zipBlob),
         fileName: serverFileName ?? defaultName,
       });
       setStems(extractedStems);
-      resetStemState();
+      setIsPlaying(false);
+      setPlaybackPosition(0);
+      setPlaybackDuration(0);
+      setMutedByStem({
+        bass: false,
+        drums: false,
+        guitar: false,
+        vocals: false,
+      });
+      setSeparationProgress(100);
 
       setStatus({
         type: "success",
-        message: "Done. Stems are ready to play together below, with per-stem mute controls.",
+        message: "Stems loaded. Use the transport controls and channel mutes to preview your mix.",
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Stem separation failed unexpectedly.";
@@ -237,235 +322,218 @@ export default function Home() {
     }
   }
 
+  const isWorking = status.type === "working";
+  const progressLabel = `${clampPercent(separationProgress)}%`;
+
   return (
-    <main className="relative mx-auto min-h-screen w-full max-w-6xl px-5 py-8 sm:px-8 sm:py-10 lg:px-12 lg:py-14">
-      <section className="fade-in relative grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="glass-panel relative overflow-hidden rounded-3xl p-6 sm:p-8">
-          <div className="ambient-orb orb-a" aria-hidden="true" />
-          <div className="ambient-orb orb-b" aria-hidden="true" />
+    <main className="daw-shell mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
+      <section className="console-frame fade-in grid gap-5 rounded-3xl p-4 sm:p-6 lg:grid-cols-[1.2fr_0.8fr] lg:p-7">
+        <div className="space-y-4">
+          <header className="console-header rounded-2xl border px-4 py-4 sm:px-5">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--accent)]">
+              Audio Splitter DAW
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">Stem Separation Console</h1>
+            <p className="mt-2 max-w-3xl text-sm text-[var(--ink-dim)] sm:text-base">
+              Render bass, drums, guitar, and vocals into synchronized channels, then audition in a mixer-style layout.
+            </p>
+          </header>
 
-          <div className="relative z-10 flex flex-col gap-6">
-            <div className="space-y-3">
-              <p className="inline-flex w-fit rounded-full border border-[var(--line)] bg-[var(--panel-strong)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
-                Audio Splitter Studio
-              </p>
-              <h1 className="max-w-xl text-3xl font-bold leading-tight tracking-tight sm:text-5xl">
-                Clean stem extraction for production-ready workflows.
-              </h1>
-              <p className="max-w-2xl text-sm leading-relaxed text-[color:color-mix(in_srgb,var(--foreground)_75%,transparent)] sm:text-base">
-                Drop one track and export a zip with isolated bass, drums, guitar, and vocals.
-                Backed by Demucs htdemucs_6s on your server.
-              </p>
-            </div>
-
-            <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel-strong)] p-4 sm:p-5">
-              <label className="block rounded-2xl border border-dashed border-[var(--line)] bg-[color:color-mix(in_srgb,var(--panel)_70%,white_30%)] p-4 sm:p-6">
-                <span className="mb-2 block text-sm font-semibold">Upload Audio File</span>
-                <span className="mb-4 block text-xs text-[color:color-mix(in_srgb,var(--foreground)_65%,transparent)]">
-                  Supports any browser-readable audio type.
-                </span>
+          <form onSubmit={handleSubmit} className="daw-panel rounded-2xl border p-4 sm:p-5">
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <label className="block rounded-xl border border-dashed border-[var(--line)] bg-[var(--surface-hi)] p-4">
+                <span className="mb-2 block text-sm font-semibold">Source Audio</span>
+                <span className="mb-3 block text-xs text-[var(--ink-dim)]">Any browser-readable audio format.</span>
                 <input
                   type="file"
                   accept="audio/*"
                   onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)}
-                  className="block w-full rounded-xl border border-[var(--line)] bg-white/80 px-3 py-2 text-sm outline-none ring-[var(--brand-soft)] transition focus:ring-2 dark:bg-black/10"
+                  className="daw-input block w-full rounded-lg px-3 py-2 text-sm"
                 />
-                <span className="mt-3 block text-xs font-mono text-[color:color-mix(in_srgb,var(--foreground)_75%,transparent)]">
+                <span className="mt-3 block text-xs font-mono text-[var(--ink-dim)]">
                   {file ? `selected: ${file.name}` : "selected: none"}
                 </span>
               </label>
 
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  type="submit"
-                  disabled={!file || status.type === "working"}
-                  className="rounded-xl bg-[var(--brand)] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(232,93,4,0.25)] transition hover:translate-y-[-1px] hover:bg-[color:color-mix(in_srgb,var(--brand)_85%,black_15%)] disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {status.type === "working" ? "Separating..." : "Extract Stems"}
-                </button>
-                <p className="text-xs text-[color:color-mix(in_srgb,var(--foreground)_65%,transparent)] sm:text-sm">
-                  Typical run time: 1-3 minutes depending on track length.
-                </p>
+              <button
+                type="submit"
+                disabled={!file || isWorking}
+                className="transport-button h-fit rounded-xl px-5 py-3 text-sm font-semibold uppercase tracking-[0.1em] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {isWorking ? "Rendering..." : "Render Stems"}
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-2">
+              <div className="flex items-center justify-between text-xs font-mono text-[var(--ink-dim)]">
+                <span>Separation Progress</span>
+                <span>{progressLabel}</span>
+              </div>
+              <div className="progress-track h-2 w-full overflow-hidden rounded-full">
+                <div
+                  className="progress-fill h-full rounded-full"
+                  style={{ width: `${clampPercent(separationProgress)}%` }}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={clampPercent(separationProgress)}
+                  aria-label="Separation progress"
+                />
+              </div>
+            </div>
+
+            <p
+              className={`mt-4 rounded-xl border px-3 py-2 text-sm ${
+                status.type === "error"
+                  ? "border-red-400/55 bg-red-950/45 text-red-100"
+                  : status.type === "success"
+                    ? "border-emerald-400/45 bg-emerald-950/40 text-emerald-100"
+                    : "border-[var(--line)] bg-[var(--surface-hi)] text-[var(--ink)]"
+              }`}
+            >
+              {status.message}
+            </p>
+          </form>
+
+          <section className="daw-panel rounded-2xl border p-4 sm:p-5">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Transport</p>
+                <h2 className="text-xl font-semibold">Master Timeline</h2>
               </div>
 
-              <p
-                className={`rounded-xl border px-3 py-2 text-sm ${
-                  status.type === "error"
-                    ? "border-red-300/70 bg-red-100/70 text-red-800 dark:border-red-400/40 dark:bg-red-950/40 dark:text-red-200"
-                    : status.type === "success"
-                      ? "border-emerald-300/70 bg-emerald-100/70 text-emerald-800 dark:border-emerald-400/40 dark:bg-emerald-950/40 dark:text-emerald-200"
-                      : "border-[var(--line)] bg-[color:color-mix(in_srgb,var(--panel)_75%,white_25%)] text-[color:color-mix(in_srgb,var(--foreground)_82%,transparent)]"
-                }`}
-              >
-                {status.message}
-              </p>
-            </form>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={togglePlayAll} className="transport-chip rounded-lg px-4 py-2 text-sm font-semibold" disabled={stems.length === 0}>
+                  {isPlaying ? "Pause" : "Play"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstAudio = stems
+                      .map((stem) => audioRefs.current[stem.name])
+                      .find((audio): audio is HTMLAudioElement => Boolean(audio));
+                    const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
+                    setSyncedPosition(nextPosition);
+                  }}
+                  className="transport-chip rounded-lg px-3 py-2 text-sm"
+                  disabled={stems.length === 0}
+                >
+                  -5s
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSyncedPosition(0)}
+                  className="transport-chip rounded-lg px-3 py-2 text-sm"
+                  disabled={stems.length === 0}
+                >
+                  Start
+                </button>
+              </div>
+            </div>
 
-            {stems.length > 0 && (
-              <section className="space-y-4 rounded-2xl border border-[var(--line)] bg-[var(--panel-strong)] p-4 sm:p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--accent)]">
-                      Stem Mixer
-                    </p>
-                    <h2 className="text-xl font-semibold">Play all stems in sync</h2>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={togglePlayAll}
-                      className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:translate-y-[-1px] hover:bg-[color:color-mix(in_srgb,var(--accent)_85%,black_15%)]"
-                    >
-                      {isPlaying ? "Pause All" : "Play All"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const firstAudio = stems
-                          .map((stem) => audioRefs.current[stem.name])
-                          .find((audio): audio is HTMLAudioElement => Boolean(audio));
-                        const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
-                        setSyncedPosition(nextPosition);
-                      }}
-                      className="rounded-xl border border-[var(--line)] px-3 py-2 text-sm font-medium transition hover:bg-[color:color-mix(in_srgb,var(--panel)_60%,white_40%)]"
-                    >
-                      -5s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSyncedPosition(0)}
-                      className="rounded-xl border border-[var(--line)] px-3 py-2 text-sm font-medium transition hover:bg-[color:color-mix(in_srgb,var(--panel)_60%,white_40%)]"
-                    >
-                      Restart
-                    </button>
-                  </div>
-                </div>
-
-                <label className="block space-y-2">
-                  <span className="flex items-center justify-between text-xs font-mono text-[color:color-mix(in_srgb,var(--foreground)_74%,transparent)]">
-                    <span>
-                      {Math.floor(playbackPosition / 60)
-                        .toString()
-                        .padStart(2, "0")}
-                      :{Math.floor(playbackPosition % 60)
-                        .toString()
-                        .padStart(2, "0")}
-                    </span>
-                    <span>
-                      {Math.floor(playbackDuration / 60)
-                        .toString()
-                        .padStart(2, "0")}
-                      :{Math.floor(playbackDuration % 60)
-                        .toString()
-                        .padStart(2, "0")}
-                    </span>
-                  </span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(playbackDuration, 1)}
-                    step={0.01}
-                    value={Math.min(playbackPosition, Math.max(playbackDuration, 1))}
-                    onChange={(event) => setSyncedPosition(Number(event.currentTarget.value))}
-                    className="w-full accent-[var(--brand)]"
-                  />
-                </label>
-
-                <ul className="grid gap-2 sm:grid-cols-2">
-                  {stems.map((stem) => {
-                    const isMuted = mutedByStem[stem.name];
-
-                    return (
-                      <li
-                        key={stem.name}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-[var(--line)] bg-[color:color-mix(in_srgb,var(--panel)_70%,white_30%)] px-3 py-2.5"
-                      >
-                        <div>
-                          <p className="text-sm font-semibold capitalize">{stem.name}</p>
-                          <p className="text-xs text-[color:color-mix(in_srgb,var(--foreground)_65%,transparent)]">
-                            {isMuted ? "Muted" : "Live"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => toggleStemMute(stem.name)}
-                          className={`rounded-lg px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.08em] transition ${
-                            isMuted
-                              ? "border border-[var(--line)] bg-transparent text-[var(--foreground)] hover:bg-[color:color-mix(in_srgb,var(--panel)_55%,white_45%)]"
-                              : "bg-[var(--brand)] text-white hover:bg-[color:color-mix(in_srgb,var(--brand)_85%,black_15%)]"
-                          }`}
-                        >
-                          {isMuted ? "Unmute" : "Mute"}
-                        </button>
-
-                        <audio
-                          ref={(node) => {
-                            audioRefs.current[stem.name] = node;
-                          }}
-                          src={stem.url}
-                          preload="metadata"
-                          onLoadedMetadata={(event) => {
-                            const currentDuration = event.currentTarget.duration;
-                            if (Number.isFinite(currentDuration)) {
-                              setPlaybackDuration((previousDuration) => Math.max(previousDuration, currentDuration));
-                            }
-                          }}
-                          onEnded={() => {
-                            if (stem.name === availableStemNames[0]) {
-                              setIsPlaying(false);
-                            }
-                          }}
-                          className="hidden"
-                        />
-                      </li>
-                    );
-                  })}
-                </ul>
-
-                {downloadZip && (
-                  <a
-                    href={downloadZip.url}
-                    download={downloadZip.fileName}
-                    className="inline-flex rounded-xl border border-[var(--line)] px-4 py-2 text-sm font-semibold transition hover:bg-[color:color-mix(in_srgb,var(--panel)_55%,white_45%)]"
-                  >
-                    Download Stems ZIP
-                  </a>
-                )}
-              </section>
-            )}
-          </div>
+            <label className="block">
+              <span className="mb-2 flex items-center justify-between text-xs font-mono text-[var(--ink-dim)]">
+                <span>
+                  {Math.floor(playbackPosition / 60)
+                    .toString()
+                    .padStart(2, "0")}
+                  :
+                  {Math.floor(playbackPosition % 60)
+                    .toString()
+                    .padStart(2, "0")}
+                </span>
+                <span>
+                  {Math.floor(playbackDuration / 60)
+                    .toString()
+                    .padStart(2, "0")}
+                  :
+                  {Math.floor(playbackDuration % 60)
+                    .toString()
+                    .padStart(2, "0")}
+                </span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(playbackDuration, 1)}
+                step={0.01}
+                value={Math.min(playbackPosition, Math.max(playbackDuration, 1))}
+                onChange={(event) => setSyncedPosition(Number(event.currentTarget.value))}
+                className="timeline-slider w-full"
+              />
+            </label>
+          </section>
         </div>
 
-        <aside className="glass-panel fade-in rounded-3xl p-6 sm:p-8" style={{ animationDelay: "120ms" }}>
-          <div className="space-y-6">
+        <aside className="daw-panel rounded-2xl border p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between">
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">
-                Session Output
-              </p>
-              <h2 className="text-2xl font-semibold">What You Get</h2>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--accent)]">Mixer</p>
+              <h2 className="text-xl font-semibold">Channel Strips</h2>
             </div>
+            {downloadZip && (
+              <a href={downloadZip.url} download={downloadZip.fileName} className="transport-chip rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em]">
+                Download ZIP
+              </a>
+            )}
+          </div>
 
-            <ul className="space-y-3 text-sm">
-              {[
-                "Bass stem (mp3)",
-                "Drums stem (mp3)",
-                "Guitar stem (mp3)",
-                "Vocals stem (mp3)",
-              ].map((item) => (
-                <li key={item} className="flex items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--panel-strong)] px-3 py-2.5">
-                  <span className="h-2 w-2 rounded-full bg-[var(--brand)]" aria-hidden="true" />
-                  <span>{item}</span>
-                </li>
-              ))}
+          {stems.length === 0 ? (
+            <div className="rounded-xl border border-[var(--line)] bg-[var(--surface-hi)] p-4 text-sm text-[var(--ink-dim)]">
+              Render stems to populate channel strips.
+            </div>
+          ) : (
+            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+              {stems.map((stem) => {
+                const isMuted = mutedByStem[stem.name];
+
+                return (
+                  <li key={stem.name} className="channel-strip rounded-xl border border-[var(--line)] p-3">
+                    <p className="text-xs uppercase tracking-[0.12em] text-[var(--ink-dim)]">Channel</p>
+                    <p className="mt-1 text-sm font-semibold capitalize">{stem.name}</p>
+                    <div className="vu-stack mt-3" aria-hidden="true">
+                      <span />
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleStemMute(stem.name)}
+                      className={`mt-3 w-full rounded-md px-2 py-2 text-xs font-semibold uppercase tracking-[0.08em] ${
+                        isMuted ? "mute-off" : "mute-on"
+                      }`}
+                    >
+                      {isMuted ? "Unmute" : "Mute"}
+                    </button>
+
+                    <audio
+                      ref={(node) => {
+                        audioRefs.current[stem.name] = node;
+                      }}
+                      src={stem.url}
+                      preload="metadata"
+                      onLoadedMetadata={(event) => {
+                        const currentDuration = event.currentTarget.duration;
+                        if (Number.isFinite(currentDuration)) {
+                          setPlaybackDuration((previousDuration) => Math.max(previousDuration, currentDuration));
+                        }
+                      }}
+                      onEnded={() => {
+                        if (stem.name === availableStemNames[0]) {
+                          setIsPlaying(false);
+                        }
+                      }}
+                      className="hidden"
+                    />
+                  </li>
+                );
+              })}
             </ul>
+          )}
 
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--panel-strong)] p-4">
-              <p className="mb-1 text-xs uppercase tracking-[0.12em] text-[color:color-mix(in_srgb,var(--foreground)_65%,transparent)]">
-                API Endpoint
-              </p>
-              <p className="font-mono text-sm">POST /api/split</p>
-            </div>
+          <div className="mt-4 rounded-xl border border-[var(--line)] bg-[var(--surface-hi)] p-3 text-xs text-[var(--ink-dim)]">
+            Endpoint: <span className="font-mono">POST /api/split</span> and progress polling via <span className="font-mono">GET /api/split?jobId=...</span>
           </div>
         </aside>
       </section>
