@@ -2,10 +2,18 @@ import JSZip from "jszip";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import {
+  createSplitJob,
+  getSplitJob,
+  markSplitJobCompleted,
+  markSplitJobFailed,
+  setSplitJobProgress,
+  updateSplitJob,
+} from "./jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +41,11 @@ function resolvePythonBinary(): string {
   return "python3";
 }
 
-function runDemucs(inputPath: string, outputDir: string): Promise<void> {
+function runDemucs(
+  inputPath: string,
+  outputDir: string,
+  onProgress: (percent: number) => void,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const pythonBinary = resolvePythonBinary();
     const args = [
@@ -53,7 +65,16 @@ function runDemucs(inputPath: string, outputDir: string): Promise<void> {
     let stderr = "";
 
     proc.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+
+      const progressMatches = text.matchAll(/(\d{1,3})%\|/g);
+      for (const match of progressMatches) {
+        const value = Number(match[1]);
+        if (Number.isFinite(value)) {
+          onProgress(Math.max(0, Math.min(100, value)));
+        }
+      }
     });
 
     proc.on("error", (error) => {
@@ -88,26 +109,32 @@ async function resolveStemDirectory(baseOutputDir: string, inputName: string): P
   return path.join(modelDir, firstTrackDir.name);
 }
 
-export async function POST(request: Request) {
-  let tempDirPath = "";
+async function processSplitJob(jobId: string, file: File): Promise<void> {
+  const tempDirPath = await mkdtemp(path.join(tmpdir(), "audio-stems-"));
+
+  updateSplitJob(jobId, {
+    status: "processing",
+    tempDirPath,
+    progress: 3,
+    message: "Preparing audio for separation.",
+  });
 
   try {
-    const formData = await request.formData();
-    const file = formData.get("file");
-
-    if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Please upload an audio file." }, { status: 400 });
-    }
-
-    tempDirPath = await mkdtemp(path.join(tmpdir(), "audio-stems-"));
-
     const safeInputBase = sanitizeFileStem(file.name || "input");
     const inputFileName = `${randomUUID()}-${safeInputBase}${path.extname(file.name || "") || ".wav"}`;
     const inputPath = path.join(tempDirPath, inputFileName);
     const outputDir = path.join(tempDirPath, "demucs-output");
 
+    setSplitJobProgress(jobId, 8, "Uploading source audio to the engine.");
     await writeFile(inputPath, Buffer.from(await file.arrayBuffer()));
-    await runDemucs(inputPath, outputDir);
+
+    setSplitJobProgress(jobId, 12, "Demucs is separating stems.");
+    await runDemucs(inputPath, outputDir, (demucsPercent) => {
+      const scaledPercent = 12 + demucsPercent * 0.72;
+      setSplitJobProgress(jobId, scaledPercent, `Demucs separation ${demucsPercent}% complete.`);
+    });
+
+    setSplitJobProgress(jobId, 87, "Collecting generated stems.");
 
     const stemDir = await resolveStemDirectory(outputDir, path.parse(inputFileName).name);
     const zip = new JSZip();
@@ -126,10 +153,7 @@ export async function POST(request: Request) {
     }
 
     if (availableStems.length === 0) {
-      return NextResponse.json(
-        { error: "Stem extraction finished, but no requested stems were found." },
-        { status: 500 },
-      );
+      throw new Error("Stem extraction finished, but no requested stems were found.");
     }
 
     zip.file(
@@ -152,36 +176,67 @@ export async function POST(request: Request) {
       compressionOptions: { level: 6 },
     });
 
-    const zipBytes = new Uint8Array(zipBuffer);
     const outputBaseName = sanitizeFileStem(file.name || "audio");
     const zipFileName = `${outputBaseName}-stems.zip`;
+    const zipPath = path.join(tempDirPath, zipFileName);
 
-    return new NextResponse(zipBytes, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/zip",
-        "Content-Disposition": `attachment; filename="${zipFileName}"`,
-        "Cache-Control": "no-store",
-      },
+    await writeFile(zipPath, zipBuffer);
+    markSplitJobCompleted(jobId, {
+      zipPath,
+      zipFileName,
+      message: `Separation complete: ${availableStems.join(", ")} stems ready for download.`,
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Unknown error";
-    const payload: { error: string; detail?: string } = {
-      error: "Stem separation failed. Make sure Demucs is installed and the file is valid audio.",
-    };
-
-    if (process.env.NODE_ENV !== "production") {
-      payload.detail = detail;
-    }
-
-    return NextResponse.json(payload, { status: 500 });
-  } finally {
-    if (tempDirPath) {
-      try {
-        await rm(tempDirPath, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors.
-      }
-    }
+    markSplitJobFailed(
+      jobId,
+      `Stem separation failed. Make sure Demucs is installed and the file is valid audio. ${detail}`,
+    );
   }
+}
+
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  const file = formData.get("file");
+
+  if (!(file instanceof File)) {
+    return NextResponse.json({ error: "Please upload an audio file." }, { status: 400 });
+  }
+
+  const job = createSplitJob(randomUUID(), file.name || "audio");
+  void processSplitJob(job.id, file);
+
+  return NextResponse.json(
+    {
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress,
+      message: job.message,
+    },
+    { status: 202 },
+  );
+}
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const jobId = searchParams.get("jobId")?.trim();
+
+  if (!jobId) {
+    return NextResponse.json({ error: "Missing required query parameter: jobId" }, { status: 400 });
+  }
+
+  const job = getSplitJob(jobId);
+  if (!job) {
+    return NextResponse.json({ error: "Split job was not found or has expired." }, { status: 404 });
+  }
+
+  return NextResponse.json({
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    error: job.error,
+    fileName: job.zipFileName,
+    downloadUrl: job.status === "completed" ? `/api/split/${job.id}/download` : null,
+  });
 }
