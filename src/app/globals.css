@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 :root {
-  --background: #1a1f25;
-  --foreground: #eef3f9;
-  --surface: #222932;
-  --surface-hi: #2a323d;
-  --line: rgba(214, 226, 239, 0.16);
-  --ink: #e7eef7;
-  --ink-dim: #a8b9cb;
-  --brand: #f28d35;
-  --brand-soft: #f3b067;
-  --accent: #34c8a6;
+  --background: #20212b;
+  --foreground: #edf2f7;
+  --surface: #2b2e3a;
+  --surface-hi: #353949;
+  --line: rgba(200, 214, 230, 0.16);
+  --ink: #ebf0f7;
+  --ink-dim: #a8b4c5;
+  --brand: #f4922f;
+  --brand-soft: #f9bb55;
+  --accent: #34d2c0;
 }
 
 @theme inline {
@@ -22,16 +22,16 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    --background: #edf2f8;
-    --foreground: #101924;
+    --background: #eceff7;
+    --foreground: #111827;
     --surface: #f8fbff;
-    --surface-hi: #eef4fa;
-    --line: rgba(25, 47, 70, 0.16);
-    --ink: #1a2735;
-    --ink-dim: #51657a;
-    --brand: #d76a11;
-    --brand-soft: #ee9545;
-    --accent: #0a9a7d;
+    --surface-hi: #eef3fa;
+    --line: rgba(30, 45, 62, 0.18);
+    --ink: #1d2a39;
+    --ink-dim: #55657a;
+    --brand: #d86d14;
+    --brand-soft: #eda048;
+    --accent: #0a9c86;
   }
 }
 
@@ -42,8 +42,8 @@
 body {
   min-height: 100vh;
   background:
-    radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--brand-soft) 26%, transparent) 0%, transparent 32%),
-    radial-gradient(circle at 84% 14%, color-mix(in srgb, var(--accent) 24%, transparent) 0%, transparent 35%),
+    radial-gradient(circle at 15% 10%, color-mix(in srgb, var(--brand-soft) 18%, transparent) 0%, transparent 36%),
+    radial-gradient(circle at 83% 7%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 28%),
     linear-gradient(180deg, color-mix(in srgb, var(--background) 88%, #000000 12%), var(--background));
   color: var(--foreground);
   font-family: var(--font-space-grotesk), "Segoe UI", sans-serif;
@@ -60,17 +60,89 @@ body {
 .console-frame {
   border: 1px solid var(--line);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--surface) 94%, black 6%), var(--surface)),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, black 8%), var(--surface)),
     repeating-linear-gradient(
       90deg,
-      rgba(255, 255, 255, 0.02) 0,
-      rgba(255, 255, 255, 0.02) 1px,
+      rgba(255, 255, 255, 0.016) 0,
+      rgba(255, 255, 255, 0.016) 1px,
       transparent 1px,
       transparent 14px
     );
   box-shadow:
-    0 22px 44px rgba(4, 12, 20, 0.34),
+    0 22px 48px rgba(2, 8, 18, 0.38),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.fl-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.fl-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(130deg, color-mix(in srgb, var(--brand) 10%, transparent), transparent 40%),
+    linear-gradient(290deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 42%);
+}
+
+.fl-topbar {
+  position: relative;
+  z-index: 1;
+  border-color: var(--line);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--brand) 16%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-hi) 84%, black 16%), var(--surface-hi));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.fl-transport-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fl-progress-box {
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 72%, black 28%);
+  border-radius: 10px;
+  padding: 8px;
+}
+
+.fl-workspace {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.fl-sidebar {
+  min-width: 0;
+}
+
+.fl-card {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 86%, black 14%), var(--surface)),
+    repeating-linear-gradient(
+      180deg,
+      transparent 0,
+      transparent 16px,
+      rgba(255, 255, 255, 0.02) 16px,
+      rgba(255, 255, 255, 0.02) 17px
+    );
+}
+
+.fl-arrangement {
+  min-width: 0;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 84%, black 16%), var(--surface)),
+    linear-gradient(130deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 36%);
 }
 
 .console-header {
@@ -80,7 +152,7 @@ body {
 
 .daw-panel {
   border-color: var(--line);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, black 8%), var(--surface));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface) 90%, black 10%), var(--surface));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -146,8 +218,8 @@ body {
 }
 
 .playlist-shell {
-  --lane-label-width: 12rem;
-  background: color-mix(in srgb, var(--surface) 82%, black 18%);
+  --lane-label-width: 13rem;
+  background: color-mix(in srgb, var(--surface) 80%, black 20%);
 }
 
 .playlist-stage {
@@ -163,14 +235,37 @@ body {
 .lane-label {
   border-right: 1px solid var(--line);
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--surface-hi) 84%, black 16%);
+  background: color-mix(in srgb, var(--surface-hi) 86%, black 14%);
 }
 
 .lane-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 8px;
+}
+
+.lane-head p {
+  flex: 1;
+}
+
+.lane-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: hsl(var(--clip-hue), 84%, 63%);
+  box-shadow: 0 0 0 2px color-mix(in srgb, hsl(var(--clip-hue), 84%, 63%) 26%, transparent);
+}
+
+.lane-demo-tag {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  background: color-mix(in srgb, hsl(var(--clip-hue), 82%, 58%) 62%, #0f1520 38%);
+  border: 1px solid color-mix(in srgb, hsl(var(--clip-hue), 82%, 66%) 40%, transparent);
+  border-radius: 6px;
+  padding: 2px 7px;
 }
 
 .lane-mute-btn {
@@ -203,12 +298,12 @@ body {
 }
 
 .ruler-main {
-  padding: 6px 12px;
+  padding: 8px 12px;
   background:
     repeating-linear-gradient(
       90deg,
-      rgba(255, 255, 255, 0.09) 0,
-      rgba(255, 255, 255, 0.09) 1px,
+      rgba(255, 255, 255, 0.12) 0,
+      rgba(255, 255, 255, 0.12) 1px,
       transparent 1px,
       transparent 72px
     );
@@ -253,8 +348,8 @@ body {
   background:
     repeating-linear-gradient(
       90deg,
-      rgba(255, 255, 255, 0.07) 0,
-      rgba(255, 255, 255, 0.07) 1px,
+      rgba(255, 255, 255, 0.1) 0,
+      rgba(255, 255, 255, 0.1) 1px,
       transparent 1px,
       transparent 72px
     ),
@@ -264,19 +359,24 @@ body {
 .clip-block {
   height: 100%;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, black 45%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 26%, #294244 74%), #1f3838);
+  border: 1px solid color-mix(in srgb, hsl(var(--clip-hue), 82%, 62%) 58%, black 42%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, hsl(var(--clip-hue), 72%, 58%) 70%, #0f1723 30%),
+    color-mix(in srgb, hsl(var(--clip-hue), 72%, 48%) 56%, #0f1824 44%)
+  );
   padding: 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .clip-title {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #d4f5ee;
+  color: color-mix(in srgb, #ffffff 78%, hsl(var(--clip-hue), 90%, 84%) 22%);
   font-weight: 600;
 }
 
@@ -290,7 +390,12 @@ body {
 
 .clip-wave span {
   border-radius: 2px;
-  background: linear-gradient(180deg, #9af2de 0%, #53c0aa 48%, #2d6f68 100%);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, #ffffff 60%, hsl(var(--clip-hue), 90%, 72%) 40%) 0%,
+    color-mix(in srgb, hsl(var(--clip-hue), 84%, 64%) 70%, #1d3b42 30%) 58%,
+    color-mix(in srgb, hsl(var(--clip-hue), 84%, 42%) 62%, #10212f 38%) 100%
+  );
   opacity: 0.92;
 }
 
@@ -305,6 +410,17 @@ body {
 
 .clip-muted .clip-wave span {
   background: linear-gradient(180deg, #8598ac 0%, #637285 48%, #4c5a68 100%);
+}
+
+.demo-clips {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  height: 100%;
+}
+
+.demo-clips .clip-block {
+  min-width: 110px;
 }
 
 .channel-strip {
@@ -398,5 +514,31 @@ body {
 @media (max-width: 768px) {
   .playlist-shell {
     --lane-label-width: 8rem;
+  }
+
+  .fl-topbar {
+    gap: 8px;
+  }
+
+  .fl-transport-inline .transport-chip {
+    font-size: 12px;
+    padding: 7px 10px;
+  }
+
+  .track-row {
+    min-height: 78px;
+  }
+}
+
+@media (min-width: 960px) {
+  .fl-topbar {
+    grid-template-columns: minmax(0, 1fr) auto minmax(220px, 260px);
+    align-items: center;
+    gap: 14px;
+  }
+
+  .fl-workspace {
+    grid-template-columns: 320px minmax(0, 1fr);
+    align-items: start;
   }
 }
