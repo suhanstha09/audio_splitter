@@ -14,7 +14,7 @@ const jetBrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: "Audio Splitter Studio",
-  description: "Upload a track and export clean stems for bass, drums, guitar, and vocals.",
+  description: "Upload a track and export multi-stem Demucs separations including drums, bass, guitar, piano, vocals, and other.",
 };
 
 export default function RootLayout({
