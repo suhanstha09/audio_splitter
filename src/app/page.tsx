@@ -1,15 +1,22 @@
 "use client";
 
 import JSZip from "jszip";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-const STEM_ORDER = ["bass", "drums", "guitar", "vocals"] as const;
+const STEM_ORDER = [
+  "drums",
+  "bass",
+  "rhythm_guitar",
+  "lead_guitar",
+  "guitar",
+  "piano",
+  "vocals",
+  "other",
+] as const;
 const POLL_INTERVAL_MS = 1200;
 
-type StemName = (typeof STEM_ORDER)[number];
-
 type StemTrack = {
-  name: StemName;
+  name: string;
   url: string;
 };
 
@@ -42,21 +49,30 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+function formatClock(seconds: number): string {
+  const mins = Math.floor(seconds / 60)
+    .toString()
+    .padStart(2, "0");
+  const secs = Math.floor(seconds % 60)
+    .toString()
+    .padStart(2, "0");
+  return `${mins}:${secs}`;
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
+  const [isDropActive, setIsDropActive] = useState(false);
+  const [splitGuitarMode, setSplitGuitarMode] = useState(false);
+  const [masterVolume, setMasterVolume] = useState(1);
+  const [stemVolumeByStem, setStemVolumeByStem] = useState<Record<string, number>>({});
   const [stems, setStems] = useState<StemTrack[]>([]);
   const [downloadZip, setDownloadZip] = useState<{ url: string; fileName: string } | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const [playbackDuration, setPlaybackDuration] = useState(0);
   const [separationProgress, setSeparationProgress] = useState(0);
-  const [mutedByStem, setMutedByStem] = useState<Record<StemName, boolean>>({
-    bass: false,
-    drums: false,
-    guitar: false,
-    vocals: false,
-  });
-  const audioRefs = useRef<Partial<Record<StemName, HTMLAudioElement | null>>>({});
+  const [mutedByStem, setMutedByStem] = useState<Record<string, boolean>>({});
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
   const [status, setStatus] = useState<Status>({
     type: "idle",
     message: "Drop a track and render stems through the DAW rack below.",
@@ -82,6 +98,16 @@ export default function Home() {
       }
     });
   }, [mutedByStem, stems]);
+
+  useEffect(() => {
+    stems.forEach((stem) => {
+      const audio = audioRefs.current[stem.name];
+      if (audio) {
+        const stemVolume = stemVolumeByStem[stem.name] ?? 1;
+        audio.volume = Math.max(0, Math.min(1, masterVolume * stemVolume));
+      }
+    });
+  }, [masterVolume, stemVolumeByStem, stems]);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -112,12 +138,8 @@ export default function Home() {
     setPlaybackPosition(0);
     setPlaybackDuration(0);
     setSeparationProgress(0);
-    setMutedByStem({
-      bass: false,
-      drums: false,
-      guitar: false,
-      vocals: false,
-    });
+    setMutedByStem({});
+    setStemVolumeByStem({});
   }
 
   function clearStemAssets() {
@@ -142,6 +164,37 @@ export default function Home() {
       }
     });
     setPlaybackPosition(nextPosition);
+  }
+
+  function handleDragOver(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDropActive(true);
+  }
+
+  function handleDragLeave(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDropActive(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDropActive(false);
+
+    const droppedFile = event.dataTransfer.files?.[0];
+    if (!droppedFile) {
+      return;
+    }
+
+    if (!droppedFile.type.startsWith("audio/")) {
+      setStatus({ type: "error", message: "Please drop a valid audio file." });
+      return;
+    }
+
+    setFile(droppedFile);
+    setStatus({ type: "idle", message: `Ready to split: ${droppedFile.name}` });
   }
 
   async function togglePlayAll() {
@@ -183,10 +236,17 @@ export default function Home() {
     setIsPlaying(true);
   }
 
-  function toggleStemMute(stemName: StemName) {
+  function toggleStemMute(stemName: string) {
     setMutedByStem((previous) => ({
       ...previous,
-      [stemName]: !previous[stemName],
+      [stemName]: !Boolean(previous[stemName]),
+    }));
+  }
+
+  function setStemVolume(stemName: string, volume: number) {
+    setStemVolumeByStem((previous) => ({
+      ...previous,
+      [stemName]: Math.max(0, Math.min(1, volume)),
     }));
   }
 
@@ -239,6 +299,7 @@ export default function Home() {
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("splitGuitar", splitGuitarMode ? "true" : "false");
 
       const startResponse = await fetch("/api/split", {
         method: "POST",
@@ -264,27 +325,46 @@ export default function Home() {
         throw new Error("Split completed without a downloadable zip artifact.");
       }
 
-      setStatus({ type: "working", message: "Downloading and preparing stems in the mixer." });
+      setStatus({ type: "working", message: "Downloading and preparing stems in the playlist." });
       const zipResponse = await fetch(result.downloadUrl, { cache: "no-store" });
 
       if (!zipResponse.ok) {
-        throw new Error("Split finished, but the zip could not be downloaded.");
+        const errorData = (await zipResponse.json().catch(() => null)) as { error?: string } | null;
+        const errorMessage = errorData?.error ?? `HTTP ${zipResponse.status}`;
+        throw new Error(`Failed to download ZIP: ${errorMessage}`);
       }
 
       const zipBlob = await zipResponse.blob();
       const zip = await JSZip.loadAsync(zipBlob);
       const extractedStems: StemTrack[] = [];
 
-      for (const stemName of STEM_ORDER) {
-        const stemFile = zip.file(`${stemName}.mp3`);
+      const stemMp3Files = Object.values(zip.files)
+        .filter((fileEntry) => !fileEntry.dir && fileEntry.name.toLowerCase().endsWith(".mp3"))
+        .sort((a, b) => {
+          const aStem = a.name.replace(/\.mp3$/i, "").toLowerCase();
+          const bStem = b.name.replace(/\.mp3$/i, "").toLowerCase();
+          const aIndex = STEM_ORDER.indexOf(aStem as (typeof STEM_ORDER)[number]);
+          const bIndex = STEM_ORDER.indexOf(bStem as (typeof STEM_ORDER)[number]);
 
-        if (!stemFile) {
-          continue;
-        }
+          if (aIndex === -1 && bIndex === -1) {
+            return aStem.localeCompare(bStem);
+          }
 
+          if (aIndex === -1) {
+            return 1;
+          }
+
+          if (bIndex === -1) {
+            return -1;
+          }
+
+          return aIndex - bIndex;
+        });
+
+      for (const stemFile of stemMp3Files) {
         const stemBlob = await stemFile.async("blob");
         extractedStems.push({
-          name: stemName,
+          name: stemFile.name.replace(/\.mp3$/i, "").toLowerCase(),
           url: URL.createObjectURL(stemBlob),
         });
       }
@@ -304,12 +384,18 @@ export default function Home() {
       setIsPlaying(false);
       setPlaybackPosition(0);
       setPlaybackDuration(0);
-      setMutedByStem({
-        bass: false,
-        drums: false,
-        guitar: false,
-        vocals: false,
-      });
+      setMutedByStem(
+        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
+          accumulator[stem.name] = false;
+          return accumulator;
+        }, {}),
+      );
+      setStemVolumeByStem(
+        extractedStems.reduce<Record<string, number>>((accumulator, stem) => {
+          accumulator[stem.name] = 1;
+          return accumulator;
+        }, {}),
+      );
       setSeparationProgress(100);
 
       setStatus({
@@ -324,10 +410,13 @@ export default function Home() {
 
   const isWorking = status.type === "working";
   const progressLabel = `${clampPercent(separationProgress)}%`;
+  const timelineDuration = Math.max(playbackDuration, 1);
+  const playheadPercent = Math.min(100, (playbackPosition / timelineDuration) * 100);
+  const rulerTicks = Array.from({ length: 9 }, (_, index) => (timelineDuration / 8) * index);
 
   return (
     <main className="daw-shell mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-      <section className="console-frame fade-in grid gap-5 rounded-3xl p-4 sm:p-6 lg:grid-cols-[1.2fr_0.8fr] lg:p-7">
+      <section className="console-frame fade-in rounded-3xl p-4 sm:p-6 lg:p-7">
         <div className="space-y-4">
           <header className="console-header rounded-2xl border px-4 py-4 sm:px-5">
             <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--accent)">
@@ -335,15 +424,24 @@ export default function Home() {
             </p>
             <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">Stem Separation Console</h1>
             <p className="mt-2 max-w-3xl text-sm text-(--ink-dim) sm:text-base">
-              Render bass, drums, guitar, and vocals into synchronized channels, then audition in a mixer-style layout.
+              Render multi-stems with Demucs and audition each separated track in a playlist-style arrangement.
             </p>
           </header>
 
           <form onSubmit={handleSubmit} className="daw-panel rounded-2xl border p-4 sm:p-5">
             <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-              <label className="block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-4">
+              <label
+                className={`block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-4 transition ${
+                  isDropActive ? "drop-active" : ""
+                }`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
                 <span className="mb-2 block text-sm font-semibold">Source Audio</span>
-                <span className="mb-3 block text-xs text-(--ink-dim)">Any browser-readable audio format.</span>
+                <span className="mb-3 block text-xs text-(--ink-dim)">
+                  Drag and drop audio here, or select a file manually.
+                </span>
                 <input
                   type="file"
                   accept="audio/*"
@@ -363,6 +461,19 @@ export default function Home() {
                 {isWorking ? "Rendering..." : "Render Stems"}
               </button>
             </div>
+
+            <label className="mt-4 flex items-start gap-3 rounded-lg border border-(--line) bg-(--surface-hi) px-3 py-2.5 text-sm">
+              <input
+                type="checkbox"
+                checked={splitGuitarMode}
+                onChange={(event) => setSplitGuitarMode(event.currentTarget.checked)}
+                className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
+              />
+              <span>
+                Experimental: split guitar into <strong>rhythm_guitar</strong> and <strong>lead_guitar</strong>
+                (heuristic, quality varies by song).
+              </span>
+            </label>
 
             <div className="mt-4 space-y-2">
               <div className="flex items-center justify-between text-xs font-mono text-(--ink-dim)">
@@ -431,6 +542,23 @@ export default function Home() {
               </div>
             </div>
 
+            <label className="mb-4 block">
+              <span className="mb-2 flex items-center justify-between text-xs font-mono text-(--ink-dim)">
+                <span>Master Volume</span>
+                <span>{Math.round(masterVolume * 100)}%</span>
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={masterVolume}
+                onChange={(event) => setMasterVolume(Number(event.currentTarget.value))}
+                className="timeline-slider w-full"
+                aria-label="Master volume"
+              />
+            </label>
+
             <label className="block">
               <span className="mb-2 flex items-center justify-between text-xs font-mono text-(--ink-dim)">
                 <span>
@@ -455,87 +583,139 @@ export default function Home() {
               <input
                 type="range"
                 min={0}
-                max={Math.max(playbackDuration, 1)}
+                max={timelineDuration}
                 step={0.01}
-                value={Math.min(playbackPosition, Math.max(playbackDuration, 1))}
+                value={Math.min(playbackPosition, timelineDuration)}
                 onChange={(event) => setSyncedPosition(Number(event.currentTarget.value))}
                 className="timeline-slider w-full"
               />
             </label>
           </section>
-        </div>
 
-        <aside className="daw-panel rounded-2xl border p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Mixer</p>
-              <h2 className="text-xl font-semibold">Channel Strips</h2>
+          <section className="daw-panel rounded-2xl border p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Playlist</p>
+                <h2 className="text-xl font-semibold">Arrangement Tracks</h2>
+              </div>
+              <div className="flex items-center gap-3">
+                {downloadZip && (
+                  <a
+                    href={downloadZip.url}
+                    download={downloadZip.fileName}
+                    className="transport-chip rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em]"
+                  >
+                    Download ZIP
+                  </a>
+                )}
+                <p className="text-xs font-mono text-(--ink-dim)">
+                  Playhead {formatClock(playbackPosition)} / {formatClock(timelineDuration)}
+                </p>
+              </div>
             </div>
-            {downloadZip && (
-              <a href={downloadZip.url} download={downloadZip.fileName} className="transport-chip rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em]">
-                Download ZIP
-              </a>
-            )}
-          </div>
 
-          {stems.length === 0 ? (
-            <div className="rounded-xl border border-(--line) bg-(--surface-hi) p-4 text-sm text-(--ink-dim)">
-              Render stems to populate channel strips.
-            </div>
-          ) : (
-            <ul className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
-              {stems.map((stem) => {
-                const isMuted = mutedByStem[stem.name];
-
-                return (
-                  <li key={stem.name} className="channel-strip rounded-xl border border-(--line) p-3">
-                    <p className="text-xs uppercase tracking-[0.12em] text-(--ink-dim)">Channel</p>
-                    <p className="mt-1 text-sm font-semibold capitalize">{stem.name}</p>
-                    <div className="vu-stack mt-3" aria-hidden="true">
-                      <span />
-                      <span />
-                      <span />
-                      <span />
+            {stems.length === 0 ? (
+              <div className="rounded-xl border border-(--line) bg-(--surface-hi) p-4 text-sm text-(--ink-dim)">
+                Once stems finish rendering, each one appears as its own playlist track lane.
+              </div>
+            ) : (
+              <div className="playlist-shell overflow-x-auto rounded-xl border border-(--line)">
+                <div className="playlist-stage min-w-[640px]">
+                  <div className="ruler-row">
+                    <div className="lane-label lane-label-head">Track</div>
+                    <div className="ruler-main">
+                      <div className="ruler-grid" style={{ gridTemplateColumns: `repeat(${rulerTicks.length}, minmax(0, 1fr))` }}>
+                        {rulerTicks.map((tick, index) => (
+                          <span key={`tick-${index}`} className="ruler-tick">
+                            {formatClock(tick)}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleStemMute(stem.name)}
-                      className={`mt-3 w-full rounded-md px-2 py-2 text-xs font-semibold uppercase tracking-[0.08em] ${
-                        isMuted ? "mute-off" : "mute-on"
-                      }`}
-                    >
-                      {isMuted ? "Unmute" : "Mute"}
-                    </button>
+                  </div>
 
-                    <audio
-                      ref={(node) => {
-                        audioRefs.current[stem.name] = node;
-                      }}
-                      src={stem.url}
-                      preload="metadata"
-                      onLoadedMetadata={(event) => {
-                        const currentDuration = event.currentTarget.duration;
-                        if (Number.isFinite(currentDuration)) {
-                          setPlaybackDuration((previousDuration) => Math.max(previousDuration, currentDuration));
-                        }
-                      }}
-                      onEnded={() => {
-                        if (stem.name === availableStemNames[0]) {
-                          setIsPlaying(false);
-                        }
-                      }}
-                      className="hidden"
+                  <div className="playlist-body">
+                    <div
+                      className="playhead"
+                      style={{ left: `calc(var(--lane-label-width) + ${playheadPercent} * (100% - var(--lane-label-width)) / 100)` }}
+                      aria-hidden="true"
                     />
-                  </li>
-                );
-              })}
-            </ul>
-          )}
 
-          <div className="mt-4 rounded-xl border border-(--line) bg-(--surface-hi) p-3 text-xs text-(--ink-dim)">
-            Endpoint: <span className="font-mono">POST /api/split</span> and progress polling via <span className="font-mono">GET /api/split?jobId=...</span>
-          </div>
-        </aside>
+                    {stems.map((stem) => {
+                      const isMuted = mutedByStem[stem.name];
+                      const stemVolume = stemVolumeByStem[stem.name] ?? 1;
+                      return (
+                        <div key={`${stem.name}-lane`} className="track-row">
+                          <div className="lane-label">
+                            <div className="lane-head">
+                              <p className="text-sm font-semibold capitalize">{stem.name}</p>
+                              <button
+                                type="button"
+                                onClick={() => toggleStemMute(stem.name)}
+                                className={`lane-mute-btn ${isMuted ? "lane-mute-off" : "lane-mute-on"}`}
+                              >
+                                {isMuted ? "Unmute" : "Mute"}
+                              </button>
+                            </div>
+                            <p className="text-xs text-(--ink-dim)">{isMuted ? "Muted" : "Active"}</p>
+                            <label className="mt-2 block">
+                              <span className="mb-1 flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
+                                <span>Stem Vol</span>
+                                <span>{Math.round(stemVolume * 100)}%</span>
+                              </span>
+                              <input
+                                type="range"
+                                min={0}
+                                max={1}
+                                step={0.01}
+                                value={stemVolume}
+                                onChange={(event) => setStemVolume(stem.name, Number(event.currentTarget.value))}
+                                className="timeline-slider w-full"
+                                aria-label={`${stem.name} volume`}
+                              />
+                            </label>
+                          </div>
+
+                          <div className="track-main">
+                            <div className={`clip-block ${isMuted ? "clip-muted" : ""}`}>
+                              <div className="clip-title">{stem.name}.mp3</div>
+                              <div className="clip-wave" aria-hidden="true">
+                                {Array.from({ length: 56 }, (_, barIndex) => {
+                                  const height = 18 + Math.round(Math.abs(Math.sin((barIndex + 1) * 0.42)) * 72);
+                                  return <span key={`${stem.name}-bar-${barIndex}`} style={{ height: `${height}%` }} />;
+                                })}
+                              </div>
+                            </div>
+
+                            <audio
+                              ref={(node) => {
+                                audioRefs.current[stem.name] = node;
+                              }}
+                              src={stem.url}
+                              preload="metadata"
+                              onLoadedMetadata={(event) => {
+                                const currentDuration = event.currentTarget.duration;
+                                if (Number.isFinite(currentDuration)) {
+                                  setPlaybackDuration((previousDuration) => Math.max(previousDuration, currentDuration));
+                                }
+                              }}
+                              onEnded={() => {
+                                if (stem.name === availableStemNames[0]) {
+                                  setIsPlaying(false);
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
       </section>
     </main>
   );
