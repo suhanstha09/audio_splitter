@@ -96,6 +96,11 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
+.drop-active {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
 .transport-button {
   border: 1px solid color-mix(in srgb, var(--brand) 55%, black 45%);
   color: #fff;
@@ -138,6 +143,168 @@ body {
 
 .timeline-slider {
   accent-color: var(--brand);
+}
+
+.playlist-shell {
+  --lane-label-width: 12rem;
+  background: color-mix(in srgb, var(--surface) 82%, black 18%);
+}
+
+.playlist-stage {
+  position: relative;
+}
+
+.ruler-row {
+  display: grid;
+  grid-template-columns: var(--lane-label-width) minmax(0, 1fr);
+  border-bottom: 1px solid var(--line);
+}
+
+.lane-label {
+  border-right: 1px solid var(--line);
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--surface-hi) 84%, black 16%);
+}
+
+.lane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lane-mute-btn {
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+}
+
+.lane-mute-on {
+  color: #fff;
+  border-color: color-mix(in srgb, var(--brand) 70%, black 30%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-soft) 68%, var(--brand) 32%), var(--brand));
+}
+
+.lane-mute-off {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-hi) 70%, white 30%);
+}
+
+.lane-label-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+  font-weight: 600;
+}
+
+.ruler-main {
+  padding: 6px 12px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.09) 0,
+      rgba(255, 255, 255, 0.09) 1px,
+      transparent 1px,
+      transparent 72px
+    );
+}
+
+.ruler-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.ruler-tick {
+  font-family: var(--font-jetbrains-mono), monospace;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.playlist-body {
+  position: relative;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: linear-gradient(180deg, #ffd55f, #ff9f43);
+  box-shadow: 0 0 0 1px rgba(255, 201, 99, 0.26), 0 0 20px rgba(255, 163, 82, 0.34);
+  z-index: 20;
+  pointer-events: none;
+}
+
+.track-row {
+  display: grid;
+  grid-template-columns: var(--lane-label-width) minmax(0, 1fr);
+  min-height: 88px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.track-main {
+  position: relative;
+  padding: 8px 10px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.07) 0,
+      rgba(255, 255, 255, 0.07) 1px,
+      transparent 1px,
+      transparent 72px
+    ),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 80%, black 20%), var(--surface));
+}
+
+.clip-block {
+  height: 100%;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, black 45%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 26%, #294244 74%), #1f3838);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clip-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #d4f5ee;
+  font-weight: 600;
+}
+
+.clip-wave {
+  display: grid;
+  grid-template-columns: repeat(56, minmax(0, 1fr));
+  gap: 2px;
+  height: 100%;
+  align-items: end;
+}
+
+.clip-wave span {
+  border-radius: 2px;
+  background: linear-gradient(180deg, #9af2de 0%, #53c0aa 48%, #2d6f68 100%);
+  opacity: 0.92;
+}
+
+.clip-muted {
+  border-color: color-mix(in srgb, var(--line) 80%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-hi) 74%, black 26%), var(--surface-hi));
+}
+
+.clip-muted .clip-title {
+  color: var(--ink-dim);
+}
+
+.clip-muted .clip-wave span {
+  background: linear-gradient(180deg, #8598ac 0%, #637285 48%, #4c5a68 100%);
 }
 
 .channel-strip {
@@ -225,5 +392,11 @@ body {
   100% {
     height: 30%;
     opacity: 0.8;
+  }
+}
+
+@media (max-width: 768px) {
+  .playlist-shell {
+    --lane-label-width: 8rem;
   }
 }
