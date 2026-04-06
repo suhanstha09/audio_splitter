@@ -18,8 +18,12 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const REQUIRED_STEMS = ["bass", "drums", "guitar", "vocals"] as const;
+const REQUIRED_STEMS = ["bass", "drums", "guitar", "piano", "vocals", "other"] as const;
 const DEMUCS_MODEL = "htdemucs_6s";
+
+type SplitOptions = {
+  splitGuitar: boolean;
+};
 
 function sanitizeFileStem(fileName: string): string {
   const stem = path.parse(fileName).name.trim();
@@ -92,6 +96,79 @@ function runDemucs(
   });
 }
 
+function runFfmpeg(args: string[]): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("ffmpeg", args);
+    let stderr = "";
+
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    proc.on("error", (error) => {
+      reject(error);
+    });
+
+    proc.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`ffmpeg failed with code ${code}: ${stderr || "No stderr output"}`));
+    });
+  });
+}
+
+async function splitGuitarStemExperimental(stemDir: string): Promise<string[]> {
+  const guitarPath = path.join(stemDir, "guitar.mp3");
+  if (!existsSync(guitarPath)) {
+    return [];
+  }
+
+  const rhythmPath = path.join(stemDir, "rhythm_guitar.mp3");
+  const leadPath = path.join(stemDir, "lead_guitar.mp3");
+
+  // Experimental heuristic split: low-mid power -> rhythm, mid-high presence -> lead.
+  // Rhythm: 80Hz-1400Hz with slight compression to thicken low end
+  await runFfmpeg([
+    "-y",
+    "-i",
+    guitarPath,
+    "-af",
+    "highpass=f=90,lowpass=f=1600,acompressor=threshold=-18dB:ratio=2.2:attack=25:release=220",
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    "192k",
+    rhythmPath,
+  ]);
+
+  // Lead: 1200Hz-12000Hz with mid/high presence boost to brighten and separate
+  await runFfmpeg([
+    "-y",
+    "-i",
+    guitarPath,
+    "-af",
+    "highpass=f=1300,acompressor=threshold=-20dB:ratio=2.6:attack=18:release=180,volume=1.15",
+    "-codec:a",
+    "libmp3lame",
+    "-b:a",
+    "192k",
+    leadPath,
+  ]);
+
+  const generated: string[] = [];
+  if (existsSync(rhythmPath)) {
+    generated.push("rhythm_guitar");
+  }
+  if (existsSync(leadPath)) {
+    generated.push("lead_guitar");
+  }
+
+  return generated;
+}
+
 async function resolveStemDirectory(baseOutputDir: string, inputName: string): Promise<string> {
   const expected = path.join(baseOutputDir, DEMUCS_MODEL, inputName);
   if (existsSync(expected)) {
@@ -109,7 +186,7 @@ async function resolveStemDirectory(baseOutputDir: string, inputName: string): P
   return path.join(modelDir, firstTrackDir.name);
 }
 
-async function processSplitJob(jobId: string, file: File): Promise<void> {
+async function processSplitJob(jobId: string, file: File, options: SplitOptions): Promise<void> {
   const tempDirPath = await mkdtemp(path.join(tmpdir(), "audio-stems-"));
 
   updateSplitJob(jobId, {
@@ -139,8 +216,24 @@ async function processSplitJob(jobId: string, file: File): Promise<void> {
     const stemDir = await resolveStemDirectory(outputDir, path.parse(inputFileName).name);
     const zip = new JSZip();
     const availableStems: string[] = [];
+    let generatedGuitarStems: string[] = [];
+
+    if (options.splitGuitar) {
+      setSplitJobProgress(jobId, 91, "Experimental guitar split in progress.");
+      try {
+        generatedGuitarStems = await splitGuitarStemExperimental(stemDir);
+      } catch {
+        // Keep the main separation successful even if optional guitar sub-split fails.
+        generatedGuitarStems = [];
+      }
+    }
 
     for (const stem of REQUIRED_STEMS) {
+      // Skip "guitar" stem if we're doing experimental guitar split
+      if (options.splitGuitar && stem === "guitar") {
+        continue;
+      }
+
       const stemFileName = `${stem}.mp3`;
       const stemPath = path.join(stemDir, stemFileName);
 
@@ -150,6 +243,18 @@ async function processSplitJob(jobId: string, file: File): Promise<void> {
 
       availableStems.push(stem);
       zip.file(stemFileName, await readFile(stemPath));
+    }
+
+    for (const extraStem of generatedGuitarStems) {
+      const extraFileName = `${extraStem}.mp3`;
+      const extraPath = path.join(stemDir, extraFileName);
+
+      if (!existsSync(extraPath)) {
+        continue;
+      }
+
+      availableStems.push(extraStem);
+      zip.file(extraFileName, await readFile(extraPath));
     }
 
     if (availableStems.length === 0) {
@@ -163,6 +268,7 @@ async function processSplitJob(jobId: string, file: File): Promise<void> {
           originalFileName: file.name,
           model: DEMUCS_MODEL,
           stemsRequested: [...REQUIRED_STEMS],
+          experimentalGuitarSplit: options.splitGuitar,
           stemsIncluded: availableStems,
         },
         null,
@@ -176,11 +282,21 @@ async function processSplitJob(jobId: string, file: File): Promise<void> {
       compressionOptions: { level: 6 },
     });
 
+    if (!zipBuffer || zipBuffer.length === 0) {
+      throw new Error("ZIP generation produced an empty buffer.");
+    }
+
     const outputBaseName = sanitizeFileStem(file.name || "audio");
     const zipFileName = `${outputBaseName}-stems.zip`;
     const zipPath = path.join(tempDirPath, zipFileName);
 
     await writeFile(zipPath, zipBuffer);
+
+    // Verify the file was written correctly
+    if (!existsSync(zipPath)) {
+      throw new Error("ZIP file was not written to disk successfully.");
+    }
+
     markSplitJobCompleted(jobId, {
       zipPath,
       zipFileName,
@@ -198,13 +314,14 @@ async function processSplitJob(jobId: string, file: File): Promise<void> {
 export async function POST(request: Request) {
   const formData = await request.formData();
   const file = formData.get("file");
+  const splitGuitar = formData.get("splitGuitar") === "true";
 
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Please upload an audio file." }, { status: 400 });
   }
 
   const job = createSplitJob(randomUUID(), file.name || "audio");
-  void processSplitJob(job.id, file);
+  void processSplitJob(job.id, file, { splitGuitar });
 
   return NextResponse.json(
     {
