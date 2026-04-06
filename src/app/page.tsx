@@ -1,7 +1,7 @@
 "use client";
 
 import JSZip from "jszip";
-import { DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, DragEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 const STEM_ORDER = [
   "drums",
@@ -14,6 +14,12 @@ const STEM_ORDER = [
   "other",
 ] as const;
 const POLL_INTERVAL_MS = 1200;
+const DEMO_TRACKS = [
+  { name: "Drums", clips: [18, 28, 22, 34, 20], hue: 24 },
+  { name: "Bass", clips: [32, 24, 30], hue: 198 },
+  { name: "Lead", clips: [22, 30, 26, 20], hue: 312 },
+  { name: "Pad", clips: [42, 34], hue: 142 },
+];
 
 type StemTrack = {
   name: string;
@@ -415,212 +421,236 @@ export default function Home() {
   const rulerTicks = Array.from({ length: 9 }, (_, index) => (timelineDuration / 8) * index);
 
   return (
-    <main className="daw-shell mx-auto min-h-screen w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-      <section className="console-frame fade-in rounded-3xl p-4 sm:p-6 lg:p-7">
-        <div className="space-y-4">
-          <header className="console-header rounded-2xl border px-4 py-4 sm:px-5">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-(--accent)">
-              Audio Splitter DAW
-            </p>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-4xl">Stem Separation Console</h1>
-            <p className="mt-2 max-w-3xl text-sm text-(--ink-dim) sm:text-base">
-              Render multi-stems with Demucs and audition each separated track in a playlist-style arrangement.
-            </p>
-          </header>
+    <main className="daw-shell mx-auto min-h-screen w-full max-w-375 px-3 py-4 sm:px-5 sm:py-6 lg:px-6 lg:py-7">
+      <section className="console-frame fl-frame fade-in rounded-3xl p-3 sm:p-4">
+        <header className="fl-topbar rounded-2xl border px-3 py-3 sm:px-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-(--accent)">Audio Splitter Studio</p>
+            <h1 className="mt-1 text-lg font-bold tracking-tight sm:text-xl">Playlist Arrangement</h1>
+          </div>
 
-          <form onSubmit={handleSubmit} className="daw-panel rounded-2xl border p-4 sm:p-5">
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+          <div className="fl-transport-inline">
+            <button type="button" onClick={togglePlayAll} className="transport-chip rounded-lg px-4 py-2 text-sm font-semibold" disabled={stems.length === 0}>
+              {isPlaying ? "Pause" : "Play"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const firstAudio = stems
+                  .map((stem) => audioRefs.current[stem.name])
+                  .find((audio): audio is HTMLAudioElement => Boolean(audio));
+                const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
+                setSyncedPosition(nextPosition);
+              }}
+              className="transport-chip rounded-lg px-3 py-2 text-sm"
+              disabled={stems.length === 0}
+            >
+              -5s
+            </button>
+            <button
+              type="button"
+              onClick={() => setSyncedPosition(0)}
+              className="transport-chip rounded-lg px-3 py-2 text-sm"
+              disabled={stems.length === 0}
+            >
+              Start
+            </button>
+            <p className="rounded-lg border border-(--line) px-3 py-2 text-xs font-mono text-(--ink-dim)">
+              {formatClock(playbackPosition)} / {formatClock(timelineDuration)}
+            </p>
+          </div>
+
+          <div className="fl-progress-box">
+            <div className="flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
+              <span>Render</span>
+              <span>{progressLabel}</span>
+            </div>
+            <div className="progress-track mt-1.5 h-1.5 w-full overflow-hidden rounded-full">
+              <div
+                className="progress-fill h-full rounded-full"
+                style={{ width: `${clampPercent(separationProgress)}%` }}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={clampPercent(separationProgress)}
+                aria-label="Separation progress"
+              />
+            </div>
+          </div>
+        </header>
+
+        <div className="fl-workspace mt-3">
+          <aside className="fl-sidebar space-y-3">
+            <form onSubmit={handleSubmit} className="daw-panel fl-card rounded-2xl border p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Browser</p>
               <label
-                className={`block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-4 transition ${
+                className={`block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-3 transition ${
                   isDropActive ? "drop-active" : ""
                 }`}
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <span className="mb-2 block text-sm font-semibold">Source Audio</span>
-                <span className="mb-3 block text-xs text-(--ink-dim)">
-                  Drag and drop audio here, or select a file manually.
-                </span>
+                <span className="mb-2 block text-xs text-(--ink-dim)">Drop source audio</span>
                 <input
                   type="file"
                   accept="audio/*"
                   onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)}
-                  className="daw-input block w-full rounded-lg px-3 py-2 text-sm"
+                  className="daw-input block w-full rounded-lg px-2.5 py-2 text-sm"
                 />
-                <span className="mt-3 block text-xs font-mono text-(--ink-dim)">
-                  {file ? `selected: ${file.name}` : "selected: none"}
-                </span>
+                <span className="mt-2 block text-[11px] font-mono text-(--ink-dim)">{file ? file.name : "no file selected"}</span>
               </label>
 
               <button
                 type="submit"
                 disabled={!file || isWorking}
-                className="transport-button h-fit rounded-xl px-5 py-3 text-sm font-semibold uppercase tracking-widest disabled:cursor-not-allowed disabled:opacity-45"
+                className="transport-button mt-3 w-full rounded-xl px-4 py-2.5 text-sm font-semibold uppercase tracking-[0.14em] disabled:cursor-not-allowed disabled:opacity-45"
               >
                 {isWorking ? "Rendering..." : "Render Stems"}
               </button>
-            </div>
 
-            <label className="mt-4 flex items-start gap-3 rounded-lg border border-(--line) bg-(--surface-hi) px-3 py-2.5 text-sm">
-              <input
-                type="checkbox"
-                checked={splitGuitarMode}
-                onChange={(event) => setSplitGuitarMode(event.currentTarget.checked)}
-                className="mt-0.5 h-4 w-4 accent-[var(--accent)]"
-              />
-              <span>
-                Experimental: split guitar into <strong>rhythm_guitar</strong> and <strong>lead_guitar</strong>
-                (heuristic, quality varies by song).
-              </span>
-            </label>
-
-            <div className="mt-4 space-y-2">
-              <div className="flex items-center justify-between text-xs font-mono text-(--ink-dim)">
-                <span>Separation Progress</span>
-                <span>{progressLabel}</span>
-              </div>
-              <div className="progress-track h-2 w-full overflow-hidden rounded-full">
-                <div
-                  className="progress-fill h-full rounded-full"
-                  style={{ width: `${clampPercent(separationProgress)}%` }}
-                  role="progressbar"
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  aria-valuenow={clampPercent(separationProgress)}
-                  aria-label="Separation progress"
+              <label className="mt-3 flex items-start gap-2.5 rounded-lg border border-(--line) bg-(--surface-hi) px-2.5 py-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={splitGuitarMode}
+                  onChange={(event) => setSplitGuitarMode(event.currentTarget.checked)}
+                  className="mt-0.5 h-4 w-4 accent-(--accent)"
                 />
-              </div>
-            </div>
+                <span>Split guitar into rhythm and lead (experimental).</span>
+              </label>
 
-            <p
-              className={`mt-4 rounded-xl border px-3 py-2 text-sm ${
-                status.type === "error"
-                  ? "border-red-400/55 bg-red-950/45 text-red-100"
-                  : status.type === "success"
-                    ? "border-emerald-400/45 bg-emerald-950/40 text-emerald-100"
-                    : "border-(--line) bg-(--surface-hi) text-(--ink)"
-              }`}
-            >
-              {status.message}
-            </p>
-          </form>
+              <p
+                className={`mt-3 rounded-lg border px-2.5 py-2 text-xs ${
+                  status.type === "error"
+                    ? "border-red-400/55 bg-red-950/45 text-red-100"
+                    : status.type === "success"
+                      ? "border-emerald-400/45 bg-emerald-950/40 text-emerald-100"
+                      : "border-(--line) bg-(--surface-hi) text-(--ink)"
+                }`}
+              >
+                {status.message}
+              </p>
+            </form>
 
-          <section className="daw-panel rounded-2xl border p-4 sm:p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Transport</p>
-                <h2 className="text-xl font-semibold">Master Timeline</h2>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={togglePlayAll} className="transport-chip rounded-lg px-4 py-2 text-sm font-semibold" disabled={stems.length === 0}>
-                  {isPlaying ? "Pause" : "Play"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const firstAudio = stems
-                      .map((stem) => audioRefs.current[stem.name])
-                      .find((audio): audio is HTMLAudioElement => Boolean(audio));
-                    const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
-                    setSyncedPosition(nextPosition);
-                  }}
-                  className="transport-chip rounded-lg px-3 py-2 text-sm"
-                  disabled={stems.length === 0}
-                >
-                  -5s
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSyncedPosition(0)}
-                  className="transport-chip rounded-lg px-3 py-2 text-sm"
-                  disabled={stems.length === 0}
-                >
-                  Start
-                </button>
-              </div>
-            </div>
-
-            <label className="mb-4 block">
-              <span className="mb-2 flex items-center justify-between text-xs font-mono text-(--ink-dim)">
-                <span>Master Volume</span>
-                <span>{Math.round(masterVolume * 100)}%</span>
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={masterVolume}
-                onChange={(event) => setMasterVolume(Number(event.currentTarget.value))}
-                className="timeline-slider w-full"
-                aria-label="Master volume"
-              />
-            </label>
-
-            <label className="block">
-              <span className="mb-2 flex items-center justify-between text-xs font-mono text-(--ink-dim)">
-                <span>
-                  {Math.floor(playbackPosition / 60)
-                    .toString()
-                    .padStart(2, "0")}
-                  :
-                  {Math.floor(playbackPosition % 60)
-                    .toString()
-                    .padStart(2, "0")}
+            <section className="daw-panel fl-card rounded-2xl border p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Mixer</p>
+              <label className="mb-3 block">
+                <span className="mb-1.5 flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
+                  <span>Master Volume</span>
+                  <span>{Math.round(masterVolume * 100)}%</span>
                 </span>
-                <span>
-                  {Math.floor(playbackDuration / 60)
-                    .toString()
-                    .padStart(2, "0")}
-                  :
-                  {Math.floor(playbackDuration % 60)
-                    .toString()
-                    .padStart(2, "0")}
-                </span>
-              </span>
-              <input
-                type="range"
-                min={0}
-                max={timelineDuration}
-                step={0.01}
-                value={Math.min(playbackPosition, timelineDuration)}
-                onChange={(event) => setSyncedPosition(Number(event.currentTarget.value))}
-                className="timeline-slider w-full"
-              />
-            </label>
-          </section>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={masterVolume}
+                  onChange={(event) => setMasterVolume(Number(event.currentTarget.value))}
+                  className="timeline-slider w-full"
+                  aria-label="Master volume"
+                />
+              </label>
 
-          <section className="daw-panel rounded-2xl border p-4 sm:p-5">
-            <div className="mb-3 flex items-center justify-between gap-3">
+              <label className="block">
+                <span className="mb-1.5 flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
+                  <span>{formatClock(playbackPosition)}</span>
+                  <span>{formatClock(playbackDuration)}</span>
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={timelineDuration}
+                  step={0.01}
+                  value={Math.min(playbackPosition, timelineDuration)}
+                  onChange={(event) => setSyncedPosition(Number(event.currentTarget.value))}
+                  className="timeline-slider w-full"
+                />
+              </label>
+
+              {downloadZip && (
+                <a
+                  href={downloadZip.url}
+                  download={downloadZip.fileName}
+                  className="transport-chip mt-3 block rounded-lg px-3 py-2 text-center text-xs font-semibold uppercase tracking-[0.08em]"
+                >
+                  Download ZIP
+                </a>
+              )}
+            </section>
+          </aside>
+
+          <section className="daw-panel fl-arrangement rounded-2xl border p-3">
+            <div className="mb-3 flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Playlist</p>
-                <h2 className="text-xl font-semibold">Arrangement Tracks</h2>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-(--accent)">Arrangement</p>
+                <h2 className="text-base font-semibold sm:text-lg">Track Playlist</h2>
               </div>
-              <div className="flex items-center gap-3">
-                {downloadZip && (
-                  <a
-                    href={downloadZip.url}
-                    download={downloadZip.fileName}
-                    className="transport-chip rounded-lg px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em]"
-                  >
-                    Download ZIP
-                  </a>
-                )}
-                <p className="text-xs font-mono text-(--ink-dim)">
-                  Playhead {formatClock(playbackPosition)} / {formatClock(timelineDuration)}
-                </p>
-              </div>
+              <p className="text-[11px] font-mono text-(--ink-dim)">{availableStemNames.length} tracks loaded</p>
             </div>
 
             {stems.length === 0 ? (
-              <div className="rounded-xl border border-(--line) bg-(--surface-hi) p-4 text-sm text-(--ink-dim)">
-                Once stems finish rendering, each one appears as its own playlist track lane.
+              <div className="playlist-shell overflow-x-auto rounded-xl border border-(--line)">
+                <div className="playlist-stage min-w-195">
+                  <div className="ruler-row">
+                    <div className="lane-label lane-label-head">Track</div>
+                    <div className="ruler-main">
+                      <div className="ruler-grid" style={{ gridTemplateColumns: `repeat(${rulerTicks.length}, minmax(0, 1fr))` }}>
+                        {rulerTicks.map((tick, index) => (
+                          <span key={`demo-tick-${index}`} className="ruler-tick">
+                            {formatClock(tick)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="playlist-body">
+                    <div className="playhead" style={{ left: "calc(var(--lane-label-width) + 7%)" }} aria-hidden="true" />
+
+                    {DEMO_TRACKS.map((demoTrack) => {
+                      const laneStyle = {
+                        "--clip-hue": `${demoTrack.hue}`,
+                      } as CSSProperties;
+
+                      return (
+                        <div key={demoTrack.name} className="track-row" style={laneStyle}>
+                          <div className="lane-label">
+                            <div className="lane-head">
+                              <span className="lane-color" aria-hidden="true" />
+                              <p className="text-sm font-semibold">{demoTrack.name}</p>
+                              <span className="lane-demo-tag">Demo</span>
+                            </div>
+                            <p className="text-xs text-(--ink-dim)">Preview layout</p>
+                          </div>
+
+                          <div className="track-main">
+                            <div className="demo-clips">
+                              {demoTrack.clips.map((clipSize, clipIndex) => (
+                                <div
+                                  key={`${demoTrack.name}-${clipIndex}`}
+                                  className="clip-block"
+                                  style={{ width: `${clipSize}%` }}
+                                >
+                                  <div className="clip-title">{demoTrack.name}_{clipIndex + 1}</div>
+                                  <div className="clip-wave" aria-hidden="true">
+                                    {Array.from({ length: 18 }, (_, barIndex) => {
+                                      const height = 24 + Math.round(Math.abs(Math.sin((barIndex + 2) * 0.56)) * 64);
+                                      return <span key={`${demoTrack.name}-${clipIndex}-${barIndex}`} style={{ height: `${height}%` }} />;
+                                    })}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
             ) : (
               <div className="playlist-shell overflow-x-auto rounded-xl border border-(--line)">
-                <div className="playlist-stage min-w-[640px]">
+                <div className="playlist-stage min-w-195">
                   <div className="ruler-row">
                     <div className="lane-label lane-label-head">Track</div>
                     <div className="ruler-main">
@@ -641,13 +671,18 @@ export default function Home() {
                       aria-hidden="true"
                     />
 
-                    {stems.map((stem) => {
+                    {stems.map((stem, index) => {
                       const isMuted = mutedByStem[stem.name];
                       const stemVolume = stemVolumeByStem[stem.name] ?? 1;
+                      const laneStyle = {
+                        "--clip-hue": `${(index * 44 + 28) % 360}`,
+                      } as CSSProperties;
+
                       return (
-                        <div key={`${stem.name}-lane`} className="track-row">
+                        <div key={`${stem.name}-lane`} className="track-row" style={laneStyle}>
                           <div className="lane-label">
                             <div className="lane-head">
+                              <span className="lane-color" aria-hidden="true" />
                               <p className="text-sm font-semibold capitalize">{stem.name}</p>
                               <button
                                 type="button"
