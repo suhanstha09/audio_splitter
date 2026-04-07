@@ -14,12 +14,7 @@ const STEM_ORDER = [
   "other",
 ] as const;
 const POLL_INTERVAL_MS = 1200;
-const DEMO_TRACKS = [
-  { name: "Drums", clips: [18, 28, 22, 34, 20], hue: 24 },
-  { name: "Bass", clips: [32, 24, 30], hue: 198 },
-  { name: "Lead", clips: [22, 30, 26, 20], hue: 312 },
-  { name: "Pad", clips: [42, 34], hue: 142 },
-];
+const DEFAULT_WAVE_BARS = 72;
 
 type StemTrack = {
   name: string;
@@ -65,6 +60,78 @@ function formatClock(seconds: number): string {
   return `${mins}:${secs}`;
 }
 
+function buildFallbackWaveformBars(barCount: number): number[] {
+  return Array.from({ length: barCount }, (_, index) =>
+    18 + Math.round(Math.abs(Math.sin((index + 2) * 0.44)) * 68),
+  );
+}
+
+async function extractWaveformBars(audioBytes: ArrayBuffer, barCount: number): Promise<number[]> {
+  if (typeof window === "undefined") {
+    return buildFallbackWaveformBars(barCount);
+  }
+
+  const audioContextCtor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!audioContextCtor) {
+    return buildFallbackWaveformBars(barCount);
+  }
+
+  const audioContext = new audioContextCtor();
+
+  try {
+    const decoded = await audioContext.decodeAudioData(audioBytes.slice(0));
+    const channels = decoded.numberOfChannels;
+    if (channels === 0 || decoded.length === 0) {
+      return buildFallbackWaveformBars(barCount);
+    }
+
+    const aggregate = new Float32Array(decoded.length);
+    for (let channelIndex = 0; channelIndex < channels; channelIndex += 1) {
+      const data = decoded.getChannelData(channelIndex);
+      for (let sampleIndex = 0; sampleIndex < data.length; sampleIndex += 1) {
+        aggregate[sampleIndex] += Math.abs(data[sampleIndex]);
+      }
+    }
+
+    for (let sampleIndex = 0; sampleIndex < aggregate.length; sampleIndex += 1) {
+      aggregate[sampleIndex] /= channels;
+    }
+
+    const samplesPerBar = Math.max(1, Math.floor(aggregate.length / barCount));
+    const bars: number[] = [];
+    let maxValue = 0;
+
+    for (let barIndex = 0; barIndex < barCount; barIndex += 1) {
+      const start = barIndex * samplesPerBar;
+      const end = Math.min(aggregate.length, start + samplesPerBar);
+      let sum = 0;
+
+      for (let sampleIndex = start; sampleIndex < end; sampleIndex += 1) {
+        sum += aggregate[sampleIndex];
+      }
+
+      const avg = end > start ? sum / (end - start) : 0;
+      bars.push(avg);
+      if (avg > maxValue) {
+        maxValue = avg;
+      }
+    }
+
+    if (maxValue <= 0.0001) {
+      return buildFallbackWaveformBars(barCount);
+    }
+
+    return bars.map((value) => {
+      const normalized = value / maxValue;
+      return Math.max(10, Math.min(100, Math.round(normalized * 100)));
+    });
+  } catch {
+    return buildFallbackWaveformBars(barCount);
+  } finally {
+    void audioContext.close();
+  }
+}
+
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
   const [isDropActive, setIsDropActive] = useState(false);
@@ -78,6 +145,9 @@ export default function Home() {
   const [playbackDuration, setPlaybackDuration] = useState(0);
   const [separationProgress, setSeparationProgress] = useState(0);
   const [mutedByStem, setMutedByStem] = useState<Record<string, boolean>>({});
+  const [soloByStem, setSoloByStem] = useState<Record<string, boolean>>({});
+  const [armedByStem, setArmedByStem] = useState<Record<string, boolean>>({});
+  const [waveformByStem, setWaveformByStem] = useState<Record<string, number[]>>({});
   const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
   const [status, setStatus] = useState<Status>({
     type: "idle",
@@ -97,13 +167,17 @@ export default function Home() {
   }, [downloadZip, stems]);
 
   useEffect(() => {
+    const hasSolo = Object.values(soloByStem).some(Boolean);
+
     stems.forEach((stem) => {
       const audio = audioRefs.current[stem.name];
       if (audio) {
-        audio.muted = mutedByStem[stem.name];
+        const isMuted = Boolean(mutedByStem[stem.name]);
+        const isSoloed = Boolean(soloByStem[stem.name]);
+        audio.muted = isMuted || (hasSolo && !isSoloed);
       }
     });
-  }, [mutedByStem, stems]);
+  }, [mutedByStem, soloByStem, stems]);
 
   useEffect(() => {
     stems.forEach((stem) => {
@@ -145,7 +219,10 @@ export default function Home() {
     setPlaybackDuration(0);
     setSeparationProgress(0);
     setMutedByStem({});
+    setSoloByStem({});
+    setArmedByStem({});
     setStemVolumeByStem({});
+    setWaveformByStem({});
   }
 
   function clearStemAssets() {
@@ -249,11 +326,33 @@ export default function Home() {
     }));
   }
 
+  function toggleStemSolo(stemName: string) {
+    setSoloByStem((previous) => ({
+      ...previous,
+      [stemName]: !Boolean(previous[stemName]),
+    }));
+  }
+
+  function toggleStemArm(stemName: string) {
+    setArmedByStem((previous) => ({
+      ...previous,
+      [stemName]: !Boolean(previous[stemName]),
+    }));
+  }
+
   function setStemVolume(stemName: string, volume: number) {
     setStemVolumeByStem((previous) => ({
       ...previous,
       [stemName]: Math.max(0, Math.min(1, volume)),
     }));
+  }
+
+  function rewindFiveSeconds() {
+    const firstAudio = stems
+      .map((stem) => audioRefs.current[stem.name])
+      .find((audio): audio is HTMLAudioElement => Boolean(audio));
+    const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
+    setSyncedPosition(nextPosition);
   }
 
   async function waitForSplitCompletion(jobId: string): Promise<SplitJobStatusResponse> {
@@ -343,6 +442,7 @@ export default function Home() {
       const zipBlob = await zipResponse.blob();
       const zip = await JSZip.loadAsync(zipBlob);
       const extractedStems: StemTrack[] = [];
+      const extractedWaveforms: Record<string, number[]> = {};
 
       const stemMp3Files = Object.values(zip.files)
         .filter((fileEntry) => !fileEntry.dir && fileEntry.name.toLowerCase().endsWith(".mp3"))
@@ -369,8 +469,12 @@ export default function Home() {
 
       for (const stemFile of stemMp3Files) {
         const stemBlob = await stemFile.async("blob");
+        const stemName = stemFile.name.replace(/\.mp3$/i, "").toLowerCase();
+        const stemBytes = await stemBlob.arrayBuffer();
+
+        extractedWaveforms[stemName] = await extractWaveformBars(stemBytes, DEFAULT_WAVE_BARS);
         extractedStems.push({
-          name: stemFile.name.replace(/\.mp3$/i, "").toLowerCase(),
+          name: stemName,
           url: URL.createObjectURL(stemBlob),
         });
       }
@@ -396,12 +500,25 @@ export default function Home() {
           return accumulator;
         }, {}),
       );
+      setSoloByStem(
+        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
+          accumulator[stem.name] = false;
+          return accumulator;
+        }, {}),
+      );
+      setArmedByStem(
+        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
+          accumulator[stem.name] = false;
+          return accumulator;
+        }, {}),
+      );
       setStemVolumeByStem(
         extractedStems.reduce<Record<string, number>>((accumulator, stem) => {
           accumulator[stem.name] = 1;
           return accumulator;
         }, {}),
       );
+      setWaveformByStem(extractedWaveforms);
       setSeparationProgress(100);
 
       setStatus({
@@ -415,34 +532,57 @@ export default function Home() {
   }
 
   const isWorking = status.type === "working";
+  const hasSolo = Object.values(soloByStem).some(Boolean);
   const progressLabel = `${clampPercent(separationProgress)}%`;
   const timelineDuration = Math.max(playbackDuration, 1);
   const playheadPercent = Math.min(100, (playbackPosition / timelineDuration) * 100);
   const rulerTicks = Array.from({ length: 9 }, (_, index) => (timelineDuration / 8) * index);
 
-  return (
-    <main className="daw-shell mx-auto min-h-screen w-full max-w-375 px-3 py-4 sm:px-5 sm:py-6 lg:px-6 lg:py-7">
-      <section className="console-frame fl-frame fade-in rounded-3xl p-3 sm:p-4">
-        <header className="fl-topbar rounded-2xl border px-3 py-3 sm:px-4">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-(--accent)">Audio Splitter Studio</p>
-            <h1 className="mt-1 text-lg font-bold tracking-tight sm:text-xl">Playlist Arrangement</h1>
-          </div>
+  function meterLevelForStem(stemName: string, stemVolume: number): number {
+    if (!isPlaying) {
+      return 0;
+    }
 
-          <div className="fl-transport-inline">
-            <button type="button" onClick={togglePlayAll} className="transport-chip rounded-lg px-4 py-2 text-sm font-semibold" disabled={stems.length === 0}>
+    const waveformBars = waveformByStem[stemName];
+    if (!waveformBars || waveformBars.length === 0) {
+      return Math.round(stemVolume * 24);
+    }
+
+    const barIndex = Math.min(
+      waveformBars.length - 1,
+      Math.max(0, Math.floor((playbackPosition / timelineDuration) * waveformBars.length)),
+    );
+    return Math.round(waveformBars[barIndex] * stemVolume);
+  }
+
+  return (
+    <main className="daw-shell min-h-screen w-full px-0 py-0">
+      <section className="console-frame fl-frame fade-in min-h-screen w-full rounded-none p-3 sm:p-4">
+        <header className="studio-menu-bar">
+          <div className="studio-menu-left">
+            <span className="studio-logo-dot" aria-hidden="true" />
+            <span className="studio-title">Playlist</span>
+            <nav className="studio-menu-items" aria-label="Main menu">
+              <button type="button">File</button>
+              <button type="button">Edit</button>
+              <button type="button">Add</button>
+              <button type="button">Tools</button>
+              <button type="button">View</button>
+            </nav>
+          </div>
+          <div className="studio-menu-right">
+            <button
+              type="button"
+              onClick={togglePlayAll}
+              className="studio-transport-btn"
+              disabled={stems.length === 0}
+            >
               {isPlaying ? "Pause" : "Play"}
             </button>
             <button
               type="button"
-              onClick={() => {
-                const firstAudio = stems
-                  .map((stem) => audioRefs.current[stem.name])
-                  .find((audio): audio is HTMLAudioElement => Boolean(audio));
-                const nextPosition = firstAudio ? Math.max(0, firstAudio.currentTime - 5) : 0;
-                setSyncedPosition(nextPosition);
-              }}
-              className="transport-chip rounded-lg px-3 py-2 text-sm"
+              onClick={rewindFiveSeconds}
+              className="studio-transport-btn"
               disabled={stems.length === 0}
             >
               -5s
@@ -450,22 +590,27 @@ export default function Home() {
             <button
               type="button"
               onClick={() => setSyncedPosition(0)}
-              className="transport-chip rounded-lg px-3 py-2 text-sm"
+              className="studio-transport-btn"
               disabled={stems.length === 0}
             >
               Start
             </button>
-            <p className="rounded-lg border border-(--line) px-3 py-2 text-xs font-mono text-(--ink-dim)">
+            <span className="studio-time-chip">
               {formatClock(playbackPosition)} / {formatClock(timelineDuration)}
-            </p>
+            </span>
+            <span className="studio-chip">Song</span>
+            <span className="studio-chip">120 BPM</span>
+            <span className="studio-chip">4/4</span>
           </div>
+        </header>
 
-          <div className="fl-progress-box">
-            <div className="flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
-              <span>Render</span>
+        {isWorking && (
+          <div className="render-popup" role="status" aria-live="polite">
+            <div className="flex items-center justify-between text-xs font-mono text-(--ink-dim)">
+              <span>Rendering Stems</span>
               <span>{progressLabel}</span>
             </div>
-            <div className="progress-track mt-1.5 h-1.5 w-full overflow-hidden rounded-full">
+            <div className="progress-track mt-2 h-2 w-full overflow-hidden rounded-full">
               <div
                 className="progress-fill h-full rounded-full"
                 style={{ width: `${clampPercent(separationProgress)}%` }}
@@ -476,12 +621,13 @@ export default function Home() {
                 aria-label="Separation progress"
               />
             </div>
+            <p className="mt-2 text-xs text-(--ink-dim)">{status.message}</p>
           </div>
-        </header>
+        )}
 
-        <div className="fl-workspace mt-3">
+        <div className="fl-workspace mt-0">
           <aside className="fl-sidebar space-y-3">
-            <form onSubmit={handleSubmit} className="daw-panel fl-card rounded-2xl border p-3">
+            <form onSubmit={handleSubmit} className="daw-panel fl-card browser-panel rounded-2xl border p-3">
               <p className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-(--accent)">Browser</p>
               <label
                 className={`block rounded-xl border border-dashed border-(--line) bg-(--surface-hi) p-3 transition ${
@@ -605,46 +751,15 @@ export default function Home() {
                   </div>
 
                   <div className="playlist-body">
-                    <div className="playhead" style={{ left: "calc(var(--lane-label-width) + 7%)" }} aria-hidden="true" />
-
-                    {DEMO_TRACKS.map((demoTrack) => {
-                      const laneStyle = {
-                        "--clip-hue": `${demoTrack.hue}`,
-                      } as CSSProperties;
-
-                      return (
-                        <div key={demoTrack.name} className="track-row" style={laneStyle}>
-                          <div className="lane-label">
-                            <div className="lane-head">
-                              <span className="lane-color" aria-hidden="true" />
-                              <p className="text-sm font-semibold">{demoTrack.name}</p>
-                              <span className="lane-demo-tag">Demo</span>
-                            </div>
-                            <p className="text-xs text-(--ink-dim)">Preview layout</p>
-                          </div>
-
-                          <div className="track-main">
-                            <div className="demo-clips">
-                              {demoTrack.clips.map((clipSize, clipIndex) => (
-                                <div
-                                  key={`${demoTrack.name}-${clipIndex}`}
-                                  className="clip-block"
-                                  style={{ width: `${clipSize}%` }}
-                                >
-                                  <div className="clip-title">{demoTrack.name}_{clipIndex + 1}</div>
-                                  <div className="clip-wave" aria-hidden="true">
-                                    {Array.from({ length: 18 }, (_, barIndex) => {
-                                      const height = 24 + Math.round(Math.abs(Math.sin((barIndex + 2) * 0.56)) * 64);
-                                      return <span key={`${demoTrack.name}-${clipIndex}-${barIndex}`} style={{ height: `${height}%` }} />;
-                                    })}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <div className="track-row empty-track-row">
+                      <div className="lane-label">
+                        <p className="text-sm font-semibold">No Tracks</p>
+                        <p className="text-xs text-(--ink-dim)">Render stems to populate playlist lanes.</p>
+                      </div>
+                      <div className="track-main empty-track-main">
+                        <p className="text-sm text-(--ink-dim)">Waveforms will appear here after stem generation.</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -672,8 +787,13 @@ export default function Home() {
                     />
 
                     {stems.map((stem, index) => {
-                      const isMuted = mutedByStem[stem.name];
+                      const isMuted = Boolean(mutedByStem[stem.name]);
+                      const isSoloed = Boolean(soloByStem[stem.name]);
+                      const isArmed = Boolean(armedByStem[stem.name]);
+                      const isEffectivelyMuted = isMuted || (hasSolo && !isSoloed);
                       const stemVolume = stemVolumeByStem[stem.name] ?? 1;
+                      const waveformBars = waveformByStem[stem.name] ?? buildFallbackWaveformBars(DEFAULT_WAVE_BARS);
+                      const meterLevel = meterLevelForStem(stem.name, stemVolume);
                       const laneStyle = {
                         "--clip-hue": `${(index * 44 + 28) % 360}`,
                       } as CSSProperties;
@@ -684,15 +804,44 @@ export default function Home() {
                             <div className="lane-head">
                               <span className="lane-color" aria-hidden="true" />
                               <p className="text-sm font-semibold capitalize">{stem.name}</p>
+                            </div>
+
+                            <div className="lane-controls">
+                              <button
+                                type="button"
+                                onClick={() => toggleStemArm(stem.name)}
+                                className={`lane-mode-btn ${isArmed ? "lane-mode-on" : "lane-mode-off"}`}
+                              >
+                                Arm
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleStemSolo(stem.name)}
+                                className={`lane-mode-btn ${isSoloed ? "lane-mode-on" : "lane-mode-off"}`}
+                              >
+                                Solo
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => toggleStemMute(stem.name)}
-                                className={`lane-mute-btn ${isMuted ? "lane-mute-off" : "lane-mute-on"}`}
+                                className={`lane-mode-btn ${isMuted ? "lane-mode-on" : "lane-mode-off"}`}
                               >
-                                {isMuted ? "Unmute" : "Mute"}
+                                Mute
                               </button>
+                              <div className="lane-meter" aria-label={`${stem.name} output meter`}>
+                                {Array.from({ length: 12 }, (_, meterIndex) => {
+                                  const threshold = ((meterIndex + 1) / 12) * 100;
+                                  return (
+                                    <span
+                                      key={`${stem.name}-meter-${meterIndex}`}
+                                      className={meterLevel >= threshold ? "lane-meter-on" : "lane-meter-off"}
+                                    />
+                                  );
+                                })}
+                              </div>
                             </div>
-                            <p className="text-xs text-(--ink-dim)">{isMuted ? "Muted" : "Active"}</p>
+
+                            <p className="text-xs text-(--ink-dim)">{isEffectivelyMuted ? "Muted" : "Active"}</p>
                             <label className="mt-2 block">
                               <span className="mb-1 flex items-center justify-between text-[11px] font-mono text-(--ink-dim)">
                                 <span>Stem Vol</span>
@@ -712,13 +861,19 @@ export default function Home() {
                           </div>
 
                           <div className="track-main">
-                            <div className={`clip-block ${isMuted ? "clip-muted" : ""}`}>
+                            <div className={`clip-block ${isEffectivelyMuted ? "clip-muted" : ""}`}>
                               <div className="clip-title">{stem.name}.mp3</div>
-                              <div className="clip-wave" aria-hidden="true">
-                                {Array.from({ length: 56 }, (_, barIndex) => {
-                                  const height = 18 + Math.round(Math.abs(Math.sin((barIndex + 1) * 0.42)) * 72);
-                                  return <span key={`${stem.name}-bar-${barIndex}`} style={{ height: `${height}%` }} />;
-                                })}
+                              <div
+                                className="clip-wave"
+                                style={{ gridTemplateColumns: `repeat(${waveformBars.length}, minmax(0, 1fr))` }}
+                                aria-hidden="true"
+                              >
+                                {waveformBars.map((height, barIndex) => (
+                                  <span
+                                    key={`${stem.name}-bar-${barIndex}`}
+                                    style={{ ["--wave-height" as string]: `${height}%` } as CSSProperties}
+                                  />
+                                ))}
                               </div>
                             </div>
 
