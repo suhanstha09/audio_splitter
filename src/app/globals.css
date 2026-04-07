@@ -55,10 +55,11 @@ body {
 
 .daw-shell {
   position: relative;
+  width: 100%;
 }
 
 .console-frame {
-  border: 1px solid var(--line);
+  border: 0;
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--surface) 92%, black 8%), var(--surface)),
     repeating-linear-gradient(
@@ -69,13 +70,89 @@ body {
       transparent 14px
     );
   box-shadow:
-    0 22px 48px rgba(2, 8, 18, 0.38),
+    0 20px 50px rgba(2, 8, 18, 0.3),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .fl-frame {
   position: relative;
   overflow: hidden;
+}
+
+.studio-menu-bar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  margin: -12px -12px 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+  background:
+    linear-gradient(180deg, #1a1e28, #131821),
+    linear-gradient(90deg, color-mix(in srgb, var(--brand) 18%, transparent), transparent 46%);
+  box-shadow: 0 12px 22px rgba(0, 0, 0, 0.22);
+}
+
+.studio-menu-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.studio-logo-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #ffca66, #f58d27);
+  box-shadow: 0 0 0 2px rgba(243, 149, 48, 0.24);
+}
+
+.studio-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.studio-menu-items {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.studio-menu-items button {
+  border: 0;
+  color: var(--ink-dim);
+  background: transparent;
+  font-size: 12px;
+  padding: 4px 7px;
+  border-radius: 6px;
+}
+
+.studio-menu-items button:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface-hi) 70%, white 30%);
+}
+
+.studio-menu-right {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.studio-chip {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--surface-hi) 64%, black 36%);
 }
 
 .fl-frame::after {
@@ -257,17 +334,6 @@ body {
   box-shadow: 0 0 0 2px color-mix(in srgb, hsl(var(--clip-hue), 84%, 63%) 26%, transparent);
 }
 
-.lane-demo-tag {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #fff;
-  background: color-mix(in srgb, hsl(var(--clip-hue), 82%, 58%) 62%, #0f1520 38%);
-  border: 1px solid color-mix(in srgb, hsl(var(--clip-hue), 82%, 66%) 40%, transparent);
-  border-radius: 6px;
-  padding: 2px 7px;
-}
-
 .lane-mute-btn {
   border-radius: 6px;
   padding: 3px 8px;
@@ -276,6 +342,57 @@ body {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   border: 1px solid var(--line);
+}
+
+.lane-controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) 14px;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: stretch;
+}
+
+.lane-mode-btn {
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 0;
+}
+
+.lane-mode-on {
+  color: #fff;
+  border-color: color-mix(in srgb, var(--brand) 62%, black 38%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--brand-soft) 70%, var(--brand) 30%), var(--brand));
+}
+
+.lane-mode-off {
+  color: var(--ink-dim);
+  background: color-mix(in srgb, var(--surface-hi) 70%, black 30%);
+}
+
+.lane-meter {
+  display: grid;
+  grid-template-rows: repeat(12, minmax(0, 1fr));
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px;
+  background: color-mix(in srgb, var(--surface) 68%, black 32%);
+}
+
+.lane-meter span {
+  border-radius: 2px;
+}
+
+.lane-meter-on {
+  background: linear-gradient(180deg, #2de4b1 0%, #ffc348 56%, #f05b37 100%);
+}
+
+.lane-meter-off {
+  background: color-mix(in srgb, var(--surface-hi) 78%, black 22%);
 }
 
 .lane-mute-on {
@@ -382,13 +499,24 @@ body {
 
 .clip-wave {
   display: grid;
-  grid-template-columns: repeat(56, minmax(0, 1fr));
+  grid-template-columns: repeat(72, minmax(0, 1fr));
   gap: 2px;
   height: 100%;
-  align-items: end;
+  align-items: stretch;
 }
 
 .clip-wave span {
+  position: relative;
+  border-radius: 2px;
+}
+
+.clip-wave span::before,
+.clip-wave span::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: calc(var(--wave-height, 38%) / 2);
   border-radius: 2px;
   background: linear-gradient(
     180deg,
@@ -396,7 +524,16 @@ body {
     color-mix(in srgb, hsl(var(--clip-hue), 84%, 64%) 70%, #1d3b42 30%) 58%,
     color-mix(in srgb, hsl(var(--clip-hue), 84%, 42%) 62%, #10212f 38%) 100%
   );
-  opacity: 0.92;
+}
+
+.clip-wave span::before {
+  bottom: 50%;
+  margin-bottom: 1px;
+}
+
+.clip-wave span::after {
+  top: 50%;
+  margin-top: 1px;
 }
 
 .clip-muted {
@@ -409,18 +546,23 @@ body {
 }
 
 .clip-muted .clip-wave span {
+  opacity: 0.7;
+}
+
+.clip-muted .clip-wave span::before,
+.clip-muted .clip-wave span::after {
   background: linear-gradient(180deg, #8598ac 0%, #637285 48%, #4c5a68 100%);
 }
 
-.demo-clips {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  height: 100%;
+.empty-track-row {
+  min-height: 112px;
 }
 
-.demo-clips .clip-block {
-  min-width: 110px;
+.empty-track-main {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  padding-inline: 16px;
 }
 
 .channel-strip {
@@ -512,6 +654,16 @@ body {
 }
 
 @media (max-width: 768px) {
+  .studio-menu-bar {
+    position: relative;
+    margin: -12px -12px 10px;
+    flex-wrap: wrap;
+  }
+
+  .studio-menu-items {
+    display: none;
+  }
+
   .playlist-shell {
     --lane-label-width: 8rem;
   }
@@ -528,6 +680,16 @@ body {
   .track-row {
     min-height: 78px;
   }
+
+  .lane-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .lane-meter {
+    grid-template-rows: none;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    min-height: 14px;
+  }
 }
 
 @media (min-width: 960px) {
@@ -538,7 +700,7 @@ body {
   }
 
   .fl-workspace {
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: 350px minmax(0, 1fr);
     align-items: start;
   }
 }
