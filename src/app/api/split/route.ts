@@ -138,7 +138,9 @@ function runDemucs(
 
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const ffmpegBinary = ffmpegPath ?? "ffmpeg";
+    const ffmpegBinary = ffmpegPath
+      ? ffmpegPath.replace(/^\/ROOT\//, `${process.cwd()}/`)
+      : "ffmpeg";
     const proc = spawn(ffmpegBinary, args);
     let stderr = "";
 
