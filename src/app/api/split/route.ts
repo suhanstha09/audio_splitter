@@ -6,6 +6,7 @@ import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
+import ffmpegPath from "ffmpeg-static";
 import {
   createSplitJob,
   getSplitJob,
@@ -21,9 +22,48 @@ export const dynamic = "force-dynamic";
 const REQUIRED_STEMS = ["bass", "drums", "guitar", "piano", "vocals", "other"] as const;
 const DEMUCS_MODEL = "htdemucs_6s";
 
+const SPLIT_WORKER_URL = process.env.SPLIT_WORKER_URL?.trim() || "";
+
 type SplitOptions = {
   splitGuitar: boolean;
 };
+
+function getWorkerEndpoint(relativePath: string): string {
+  return `${SPLIT_WORKER_URL.replace(/\/+$/, "")}${relativePath}`;
+}
+
+async function proxySplitRequest(request: Request, relativePath: string): Promise<NextResponse> {
+  const upstream = await fetch(getWorkerEndpoint(relativePath), {
+    method: request.method,
+    headers: {
+      accept: request.headers.get("accept") ?? "application/json",
+    },
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer(),
+    cache: "no-store",
+  });
+
+  const bodyBytes = new Uint8Array(await upstream.arrayBuffer());
+  const responseHeaders = new Headers(upstream.headers);
+  responseHeaders.set("cache-control", "no-store");
+
+  return new NextResponse(bodyBytes, {
+    status: upstream.status,
+    headers: responseHeaders,
+  });
+}
+
+function getServerlessRuntimeBlocker(): string | null {
+  if (SPLIT_WORKER_URL) {
+    return null;
+  }
+
+  const isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true";
+  if (!isVercel) {
+    return null;
+  }
+
+  return "Server-side stem separation cannot run directly on Vercel serverless functions (requires Python Demucs + long-running process + persistent job state). Configure SPLIT_WORKER_URL to a dedicated Node/Python worker service.";
+}
 
 function sanitizeFileStem(fileName: string): string {
   const stem = path.parse(fileName).name.trim();
@@ -98,7 +138,8 @@ function runDemucs(
 
 function runFfmpeg(args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("ffmpeg", args);
+    const ffmpegBinary = ffmpegPath ?? "ffmpeg";
+    const proc = spawn(ffmpegBinary, args);
     let stderr = "";
 
     proc.stderr.on("data", (chunk) => {
@@ -312,6 +353,22 @@ async function processSplitJob(jobId: string, file: File, options: SplitOptions)
 }
 
 export async function POST(request: Request) {
+  if (SPLIT_WORKER_URL) {
+    return proxySplitRequest(request, "/api/split");
+  }
+
+  const blocker = getServerlessRuntimeBlocker();
+  if (blocker) {
+    return NextResponse.json(
+      {
+        error: blocker,
+        detail:
+          "Deploy the split worker on a VM/container platform (Railway, Render, Fly.io, ECS, etc.), then set SPLIT_WORKER_URL in Vercel to that worker base URL.",
+      },
+      { status: 503 },
+    );
+  }
+
   const formData = await request.formData();
   const file = formData.get("file");
   const splitGuitar = formData.get("splitGuitar") === "true";
@@ -335,6 +392,11 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
+  if (SPLIT_WORKER_URL) {
+    const { search } = new URL(request.url);
+    return proxySplitRequest(request, `/api/split${search}`);
+  }
+
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("jobId")?.trim();
 

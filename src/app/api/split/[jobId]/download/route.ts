@@ -6,6 +6,25 @@ import { getSplitJob } from "../../jobs";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const SPLIT_WORKER_URL = process.env.SPLIT_WORKER_URL?.trim() || "";
+
+function getWorkerEndpoint(relativePath: string): string {
+  return `${SPLIT_WORKER_URL.replace(/\/+$/, "")}${relativePath}`;
+}
+
+function getServerlessRuntimeBlocker(): string | null {
+  if (SPLIT_WORKER_URL) {
+    return null;
+  }
+
+  const isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true";
+  if (!isVercel) {
+    return null;
+  }
+
+  return "Server-side stem separation cannot run directly on Vercel serverless functions. Configure SPLIT_WORKER_URL to a dedicated worker service.";
+}
+
 export async function GET(
   _request: Request,
   context: {
@@ -13,6 +32,31 @@ export async function GET(
   },
 ) {
   const { jobId } = await context.params;
+
+  if (SPLIT_WORKER_URL) {
+    const upstream = await fetch(getWorkerEndpoint(`/api/split/${encodeURIComponent(jobId)}/download`), {
+      method: "GET",
+      cache: "no-store",
+      headers: {
+        accept: "application/zip,application/json",
+      },
+    });
+
+    const bodyBytes = new Uint8Array(await upstream.arrayBuffer());
+    const headers = new Headers(upstream.headers);
+    headers.set("cache-control", "no-store");
+
+    return new NextResponse(bodyBytes, {
+      status: upstream.status,
+      headers,
+    });
+  }
+
+  const blocker = getServerlessRuntimeBlocker();
+  if (blocker) {
+    return NextResponse.json({ error: blocker }, { status: 503 });
+  }
+
   const job = getSplitJob(jobId);
 
   if (!job) {
