@@ -58,3 +58,27 @@ curl -X POST http://localhost:3000/api/split \
 - First run may be slower because Demucs model weights are downloaded.
 - For very long tracks on CPU, processing can take several minutes.
 - If needed, set custom Python path with env var `DEMUCS_PYTHON`.
+
+## Deploying on Vercel
+
+This app cannot run Demucs directly inside Vercel serverless functions because stem separation needs:
+
+- Python + Demucs runtime
+- long-running processing beyond typical serverless request limits
+- persistent shared job state across polling requests
+
+Use Vercel for the web app, and run the split worker on a container/VM platform.
+
+1. Deploy this same app (or just the `/api/split*` routes) to a worker host that supports Python + ffmpeg (Railway, Render, Fly.io, ECS, etc.).
+2. On that worker, install Demucs and set `DEMUCS_PYTHON` if needed.
+3. In Vercel project settings, add env var:
+
+```bash
+SPLIT_WORKER_URL=https://your-worker-domain.example.com
+```
+
+When `SPLIT_WORKER_URL` is set, Vercel proxies these endpoints to the worker:
+
+- `POST /api/split`
+- `GET /api/split?jobId=...`
+- `GET /api/split/:jobId/download`
