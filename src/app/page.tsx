@@ -37,6 +37,13 @@ type SplitJobStatusResponse = {
   downloadUrl?: string | null;
 };
 
+function buildStemStateMap<T>(stemList: StemTrack[], initialValue: T): Record<string, T> {
+  return stemList.reduce<Record<string, T>>((accumulator, stem) => {
+    accumulator[stem.name] = initialValue;
+    return accumulator;
+  }, {});
+}
+
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) {
     return 0;
@@ -494,30 +501,10 @@ export default function Home() {
       setIsPlaying(false);
       setPlaybackPosition(0);
       setPlaybackDuration(0);
-      setMutedByStem(
-        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
-          accumulator[stem.name] = false;
-          return accumulator;
-        }, {}),
-      );
-      setSoloByStem(
-        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
-          accumulator[stem.name] = false;
-          return accumulator;
-        }, {}),
-      );
-      setArmedByStem(
-        extractedStems.reduce<Record<string, boolean>>((accumulator, stem) => {
-          accumulator[stem.name] = false;
-          return accumulator;
-        }, {}),
-      );
-      setStemVolumeByStem(
-        extractedStems.reduce<Record<string, number>>((accumulator, stem) => {
-          accumulator[stem.name] = 1;
-          return accumulator;
-        }, {}),
-      );
+      setMutedByStem(buildStemStateMap(extractedStems, false));
+      setSoloByStem(buildStemStateMap(extractedStems, false));
+      setArmedByStem(buildStemStateMap(extractedStems, false));
+      setStemVolumeByStem(buildStemStateMap(extractedStems, 1));
       setWaveformByStem(extractedWaveforms);
       setSeparationProgress(100);
 
