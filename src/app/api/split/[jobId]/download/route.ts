@@ -2,28 +2,10 @@ import { existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { NextResponse } from "next/server";
 import { getSplitJob } from "../../jobs";
+import { getServerlessRuntimeBlocker, getWorkerEndpoint, hasSplitWorker } from "../../worker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const SPLIT_WORKER_URL = process.env.SPLIT_WORKER_URL?.trim() || "";
-
-function getWorkerEndpoint(relativePath: string): string {
-  return `${SPLIT_WORKER_URL.replace(/\/+$/, "")}${relativePath}`;
-}
-
-function getServerlessRuntimeBlocker(): string | null {
-  if (SPLIT_WORKER_URL) {
-    return null;
-  }
-
-  const isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true";
-  if (!isVercel) {
-    return null;
-  }
-
-  return "Server-side stem separation cannot run directly on Vercel serverless functions. Configure SPLIT_WORKER_URL to a dedicated worker service.";
-}
 
 export async function GET(
   _request: Request,
@@ -33,7 +15,7 @@ export async function GET(
 ) {
   const { jobId } = await context.params;
 
-  if (SPLIT_WORKER_URL) {
+  if (hasSplitWorker()) {
     const upstream = await fetch(getWorkerEndpoint(`/api/split/${encodeURIComponent(jobId)}/download`), {
       method: "GET",
       cache: "no-store",
@@ -52,7 +34,9 @@ export async function GET(
     });
   }
 
-  const blocker = getServerlessRuntimeBlocker();
+  const blocker = getServerlessRuntimeBlocker(
+    "Server-side stem separation cannot run directly on Vercel serverless functions. Configure SPLIT_WORKER_URL to a dedicated worker service.",
+  );
   if (blocker) {
     return NextResponse.json({ error: blocker }, { status: 503 });
   }
