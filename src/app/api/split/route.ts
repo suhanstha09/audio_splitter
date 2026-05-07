@@ -15,6 +15,12 @@ import {
   setSplitJobProgress,
   updateSplitJob,
 } from "./jobs";
+import {
+  getServerlessRuntimeBlocker,
+  getWorkerEndpoint,
+  hasSplitWorker,
+  SPLIT_RUNTIME_BLOCK_MESSAGE,
+} from "./worker";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,15 +28,9 @@ export const dynamic = "force-dynamic";
 const REQUIRED_STEMS = ["bass", "drums", "guitar", "piano", "vocals", "other"] as const;
 const DEMUCS_MODEL = "htdemucs_6s";
 
-const SPLIT_WORKER_URL = process.env.SPLIT_WORKER_URL?.trim() || "";
-
 type SplitOptions = {
   splitGuitar: boolean;
 };
-
-function getWorkerEndpoint(relativePath: string): string {
-  return `${SPLIT_WORKER_URL.replace(/\/+$/, "")}${relativePath}`;
-}
 
 async function proxySplitRequest(request: Request, relativePath: string): Promise<NextResponse> {
   const upstream = await fetch(getWorkerEndpoint(relativePath), {
@@ -50,19 +50,6 @@ async function proxySplitRequest(request: Request, relativePath: string): Promis
     status: upstream.status,
     headers: responseHeaders,
   });
-}
-
-function getServerlessRuntimeBlocker(): string | null {
-  if (SPLIT_WORKER_URL) {
-    return null;
-  }
-
-  const isVercel = process.env.VERCEL === "1" || process.env.VERCEL === "true";
-  if (!isVercel) {
-    return null;
-  }
-
-  return "Server-side stem separation cannot run directly on Vercel serverless functions (requires Python Demucs + long-running process + persistent job state). Configure SPLIT_WORKER_URL to a dedicated Node/Python worker service.";
 }
 
 function sanitizeFileStem(fileName: string): string {
@@ -355,11 +342,11 @@ async function processSplitJob(jobId: string, file: File, options: SplitOptions)
 }
 
 export async function POST(request: Request) {
-  if (SPLIT_WORKER_URL) {
+  if (hasSplitWorker()) {
     return proxySplitRequest(request, "/api/split");
   }
 
-  const blocker = getServerlessRuntimeBlocker();
+  const blocker = getServerlessRuntimeBlocker(SPLIT_RUNTIME_BLOCK_MESSAGE);
   if (blocker) {
     return NextResponse.json(
       {
@@ -394,7 +381,7 @@ export async function POST(request: Request) {
 }
 
 export async function GET(request: Request) {
-  if (SPLIT_WORKER_URL) {
+  if (hasSplitWorker()) {
     const { search } = new URL(request.url);
     return proxySplitRequest(request, `/api/split${search}`);
   }
